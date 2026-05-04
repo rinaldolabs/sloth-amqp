@@ -7,7 +7,7 @@ This package is the TypeScript counterpart to `gitlab.com/unboundsoftware/sloth/
 ## Installation
 
 ```sh
-npm install @emilri/sloth-amqp --registry https://npm.pkg.github.com
+npm install @emilri/sloth-amqp amqplib
 ```
 
 Requires `amqplib >= 1.0.0` as a peer dependency.
@@ -21,7 +21,7 @@ Your service
     │
     │  Publish to sloth.direct.exchange.request
     │  Routing key: "delay"
-    │  Headers: { "delay-until": <unix seconds>, "target": "amqp://<serviceName>/<routingKey>/" }
+    │  Headers: { "delay-until": <unix seconds>, "target": "amqp://<serviceName>/<routingKey>" }
     ▼
 Sloth server (holds until delay-until)
     │
@@ -54,11 +54,11 @@ await send({
 ### Listening for delivered messages
 
 ```ts
-import { setupDelayedMessageListener, cleanup } from '@emilri/sloth-amqp';
+import { setupDelayedMessageListener } from '@emilri/sloth-amqp';
 
 const config = { serviceName: 'my-service', routingKey: 'my.delayed' };
 
-await setupDelayedMessageListener({
+const handle = await setupDelayedMessageListener({
   amqpUrl: process.env.AMQP_URL,
   config,
   logger: myLogger, // optional — defaults to NoOpLogger
@@ -68,9 +68,9 @@ await setupDelayedMessageListener({
   },
 });
 
-// Clean up on shutdown
-process.on('SIGTERM', () => void cleanup());
-process.on('SIGINT', () => void cleanup());
+// Clean up on shutdown — closes the consumer, channel and connection
+process.on('SIGTERM', () => void handle.close());
+process.on('SIGINT', () => void handle.close());
 ```
 
 ### Custom logger
@@ -108,7 +108,7 @@ import {
   slothRequestExchangeName, // "sloth.direct.exchange.request"
   slothResponseExchangeName, // "sloth.headers.exchange.response"
   getSlothQueueName, // (config) => "sloth.headers.exchange.response.queue.<serviceName>"
-  getSlothTarget, // (config) => "amqp://<serviceName>/<routingKey>/"
+  getSlothTarget, // (config) => "amqp://<serviceName>/<routingKey>"
 } from '@emilri/sloth-amqp';
 ```
 
@@ -121,7 +121,7 @@ Headers sent with each delayed message:
 | Header        | Type                   | Description                                                |
 | ------------- | ---------------------- | ---------------------------------------------------------- |
 | `delay-until` | `int64` (unix seconds) | When to deliver the message                                |
-| `target`      | `string` (AMQP URL)    | Response destination: `amqp://<serviceName>/<routingKey>/` |
+| `target`      | `string` (AMQP URL)    | Response destination: `amqp://<serviceName>/<routingKey>` |
 
 ## Related
 

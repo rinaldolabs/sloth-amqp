@@ -17,7 +17,8 @@
     "npm": "^11.4.0"
   },
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "peerDependencies": {
     "amqplib": ">=1.0.0"
