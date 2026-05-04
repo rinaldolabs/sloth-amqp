@@ -54,9 +54,7 @@ describe('assertSafeSlothConfig', () => {
   });
 
   it('rejects empty routingKey', () => {
-    expect(() => assertSafeSlothConfig({ serviceName: 's', routingKey: '' })).toThrow(
-      'routingKey',
-    );
+    expect(() => assertSafeSlothConfig({ serviceName: 's', routingKey: '' })).toThrow('routingKey');
   });
 
   it('rejects path traversal in serviceName', () => {

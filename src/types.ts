@@ -1,5 +1,5 @@
 import type { ChannelModel, ConsumeMessage } from 'amqplib';
-import type { SlothLogger } from './logger.js';
+import type { SlothLogger, SlothLogLevel } from './logger.js';
 import type { SlothConfig } from './utils.js';
 
 export interface SendDelayMessageParams<TData = unknown> {
@@ -9,6 +9,8 @@ export interface SendDelayMessageParams<TData = unknown> {
   config: SlothConfig;
   // Optional human-readable label used in log lines. Falls back to 'message'.
   logLabel?: string;
+  // Optional minimum level for this library's log calls. Caller's logger is otherwise untouched.
+  logLevel?: SlothLogLevel;
 }
 
 export interface SlothListenerOptions {
@@ -17,6 +19,8 @@ export interface SlothListenerOptions {
   logger?: SlothLogger;
   onMessage: (message: ConsumeMessage) => Promise<void>;
   queueExpiresMs?: number;
+  // Optional minimum level for this library's log calls. Caller's logger is otherwise untouched.
+  logLevel?: SlothLogLevel;
 }
 
 export interface SlothListenerHandle {

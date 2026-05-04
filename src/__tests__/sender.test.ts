@@ -79,7 +79,7 @@ describe('slothDelaySender', () => {
 
     await send({ data: { key: 'test' }, delayMinutes: 1, logger: mockLogger, config: testConfig });
 
-    expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('Failed to close'));
+    expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('failed to close'));
   });
 
   it('throws if delayMinutes is zero', async () => {
@@ -158,6 +158,20 @@ describe('slothDelaySender', () => {
         config: { serviceName: 'bad/name', routingKey: 'k' },
       }),
     ).rejects.toThrow('serviceName');
+  });
+
+  it('applies logLevel filter when provided', async () => {
+    const { slothDelaySender } = await import('../sender.js');
+    const send = slothDelaySender(mockClient as never);
+    await send({
+      data: { key: 'test' },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+      logLevel: 'error',
+    });
+    expect(mockLogger.debug).not.toHaveBeenCalled();
+    expect(mockLogger.info).not.toHaveBeenCalled();
   });
 
   it('warns when publish returns false (backpressure)', async () => {

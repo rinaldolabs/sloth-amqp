@@ -20,21 +20,21 @@ jobs:
     steps:
       - name: Generate GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@df432ceedc7162793be80bf4ad58ae7e4ffe9d48 # v2.0.6
+        uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.LI_CI_APP_ID }}
           private-key: ${{ secrets.LI_CI_APP_PRIVATE_KEY }}
 
       - name: Phase 2 - Create GitHub releases for merged release PRs
         id: release
-        uses: googleapis/release-please-action@a02a34c4d625d9f10a3c4af9352517bd6e4b3f68 # v5.0.0
+        uses: googleapis/release-please-action@v5
         with:
           token: ${{ steps.app-token.outputs.token }}
           skip-github-pull-request: true
 
       - name: Phase 1 - Open or update release PR
         id: release-pr
-        uses: googleapis/release-please-action@a02a34c4d625d9f10a3c4af9352517bd6e4b3f68 # v5.0.0
+        uses: googleapis/release-please-action@v5
         with:
           token: ${{ steps.app-token.outputs.token }}
           skip-github-release: true
@@ -49,8 +49,8 @@ jobs:
       packages: write
       id-token: write
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
           registry-url: 'https://npm.pkg.github.com'
@@ -67,7 +67,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload SBOM
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@v4
         with:
           name: sbom-${{ needs.release-please.outputs.version }}
           path: sbom.json

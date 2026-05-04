@@ -1,6 +1,6 @@
 import amqp, { type Channel, type ChannelModel } from 'amqplib';
-import { NoOpLogger } from './logger.js';
 import { errMessage } from './errors.js';
+import { NoOpLogger, resolveLogger } from './logger.js';
 import type { SlothListenerHandle, SlothListenerOptions } from './types.js';
 import {
   assertSafeSlothConfig,
@@ -12,9 +12,10 @@ import {
 export async function setupDelayedMessageListener({
   amqpUrl,
   config,
-  logger = new NoOpLogger(),
+  logger: rawLogger = new NoOpLogger(),
   onMessage,
   queueExpiresMs = defaultListenerQueueExpiresMs,
+  logLevel,
 }: SlothListenerOptions): Promise<SlothListenerHandle> {
   if (!amqpUrl) {
     throw new Error('amqpUrl must not be empty');
@@ -24,7 +25,8 @@ export async function setupDelayedMessageListener({
     throw new Error('queueExpiresMs must be a positive finite number');
   }
 
-  logger.info('Setting up delayed message listener');
+  const logger = resolveLogger(rawLogger, logLevel);
+  logger.debug(`sloth: setting up listener for ${config.serviceName}/${config.routingKey}`);
 
   let connection: ChannelModel | null = null;
   let channel: Channel | null = null;
@@ -42,7 +44,7 @@ export async function setupDelayedMessageListener({
         await c.close();
       }
     } catch (error) {
-      logger.error(`Error during cleanup: ${errMessage(error)}`);
+      logger.error(`sloth: failed to release listener resources: ${errMessage(error)}`);
     }
   };
 
@@ -53,11 +55,11 @@ export async function setupDelayedMessageListener({
     channel = await connection.createChannel();
 
     channel.on('error', (err: Error) => {
-      logger.error(`AMQP channel error: ${err.message}`);
+      logger.error(`sloth: listener channel error: ${err.message}`);
     });
 
     channel.on('close', () => {
-      logger.warn('AMQP channel closed');
+      logger.warn('sloth: listener channel closed');
       channel = null;
     });
 
@@ -82,7 +84,7 @@ export async function setupDelayedMessageListener({
             channel?.ack(message);
           })
           .catch((err: unknown) => {
-            logger.error(`onMessage failed: ${errMessage(err)}`);
+            logger.error(`sloth: onMessage handler failed: ${errMessage(err)}`);
             // requeue=false: rely on a broker-configured DLX for retries.
             channel?.nack(message, false, false);
           });
@@ -90,7 +92,7 @@ export async function setupDelayedMessageListener({
       { noAck: false },
     );
 
-    logger.info('Waiting for delayed messages...');
+    logger.info(`sloth: listener ready (queue=${queueName}, consumerTag=${consumerTag})`);
 
     return {
       consumerTag,
@@ -100,13 +102,13 @@ export async function setupDelayedMessageListener({
             await channel.cancel(consumerTag);
           }
         } catch (error) {
-          logger.error(`Error cancelling consumer: ${errMessage(error)}`);
+          logger.error(`sloth: failed to cancel consumer: ${errMessage(error)}`);
         }
         await closeResources();
       },
     };
   } catch (error) {
-    logger.error(`Error setting up delayed message listener: ${errMessage(error)}`);
+    logger.error(`sloth: listener setup failed: ${errMessage(error)}`);
     await closeResources();
     throw error;
   }

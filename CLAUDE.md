@@ -1,16 +1,19 @@
 # @emilri/sloth-amqp
 
-Node.js TypeScript client for the [Sloth](https://gitlab.com/unboundsoftware/sloth) delayed-message AMQP service.
-Wire-compatible with Sloth `amqp:0.0.10`.
+Node.js TypeScript client for the [Sloth](https://gitlab.com/unboundsoftware/sloth) delayed-message AMQP service. Wire-compatible with Sloth `amqp:0.0.10`.
+
+This is a thin, zero-runtime-dependency library. `amqplib` is a **peer dependency** — consumers provide it themselves.
 
 ## Commands
 
 ```bash
 npm run build         # tsc → dist/
-npm run test-once     # vitest (single run, no watch)
-npm run coverage      # vitest + v8 coverage — must be 100%
-npm run lint          # eslint (zero warnings policy)
-npm run lint:lockfile # verify package-lock.json integrity
+npm run test          # vitest --watch
+npm run test-once     # vitest single run
+npm run coverage      # vitest run --coverage (must be 100%)
+npm run lint          # eslint (zero warnings)
+npm run lint:fix      # eslint --fix
+npm run lint:lockfile # validate package-lock.json (host/scheme/integrity)
 npm run sbom          # generate sbom.json (CycloneDX)
 ```
 
@@ -18,21 +21,22 @@ npm run sbom          # generate sbom.json (CycloneDX)
 
 ```
 src/
-  logger.ts      — SlothLogger interface + NoOpLogger
-  types.ts       — SendDelayMessageParams, SlothListenerOptions, SlothSetup
-  utils.ts       — Protocol constants (exchange names, routing keys, service names)
-  connection.ts  — slothConnect(url, ...opts), slothClose
-  sender.ts      — slothDelaySender(client) → async send function
-  listener.ts    — setupDelayedMessageListener, cleanup
+  connection.ts  — slothConnect(url, ...setups), slothClose
+  sender.ts      — slothDelaySender(client) → async send<TData>(...)
+  listener.ts    — setupDelayedMessageListener → SlothListenerHandle
+  logger.ts      — SlothLogger interface, NoOpLogger, withLogLevel filter
+  errors.ts      — errMessage(unknown) → string
+  types.ts       — public param/handle types, SlothSetup
+  utils.ts       — protocol constants, SlothConfig, identifier validation
   index.ts       — public API barrel (excluded from coverage)
-  __tests__/     — all tests co-located here
+  __tests__/     — co-located vitest specs
 ```
 
-## Protocol (Sloth AMQP wire format)
+## Sloth wire protocol
 
 ```
 Request exchange:   sloth.direct.exchange.request   (direct, durable)
-Response exchange:  sloth.headers.exchange.response  (headers, durable)
+Response exchange:  sloth.headers.exchange.response (headers, durable)
 Routing key in:     delay
 Routing key out:    <config.routingKey>
 Service name:       <config.serviceName>
@@ -41,26 +45,67 @@ Response queue:     sloth.headers.exchange.response.queue.<config.serviceName>
 Headers (on publish):
   delay-until: <int64 unix seconds>
   target:      amqp://<config.serviceName>/<config.routingKey>/
+
+Headers binding (on consume):
+  service:     <config.serviceName>
 ```
 
-## Quality gates
+These constants are not configurable — they're part of the wire contract with Sloth. Do not change them.
 
-- Coverage **must be 100%** (statements/branches/functions/lines, perFile)
-- Zero ESLint warnings or errors — run `npm run lint` before committing
-- Zero TypeScript errors — `npm run build` must be clean
-- `npm audit --omit=dev --audit-level=high` must be clean
+## Quality gates (must hold on every commit)
 
-## Security checklist
+- **Coverage 100%** — statements, branches, functions, lines, `perFile`
+- **ESLint 0 warnings/errors** — `npm run lint`
+- **TypeScript 0 errors** — `npm run build`
+- **`npm audit --omit=dev --audit-level=high` clean**
+- **`npm run lint:lockfile` clean** — host=npm, scheme=https, integrity required
 
-- [ ] No `any`, no type assertions (`as`)
-- [ ] No hardcoded secrets — `AMQP_URL` always from env vars
-- [ ] No stack traces exposed in error messages
-- [ ] Input validated: `amqpUrl` non-empty, `delayMinutes > 0`
-- [ ] GitHub Actions pinned to SHA (supply chain protection)
-- [ ] Lock file committed, `npm ci` in CI
+## Security constraints
 
-## Dependencies
+- No hardcoded secrets — `amqpUrl` always comes from caller / env
+- No stack traces in error messages or logs — use `errMessage()` from `src/errors.ts`
+- No `any`, no type assertions (`as`) — only exception is test mocks casting to `never` for opaque amqplib internals
+- `serviceName` and `routingKey` are validated against `[A-Za-z0-9._-]+` (`assertSafeSlothConfig`) before flowing into AMQP routing strings
+- `delayMinutes` must be positive and finite
+- All cleanup/error paths route through the injected `SlothLogger`, never `console`
 
-`amqplib` is a **peer dependency** — consuming projects provide it themselves (same as `@opzkit/nodeamqp` pattern). It is also in `devDependencies` for running tests in this repo.
+## Dependency policy
 
-Do NOT add runtime `dependencies` without approval. This is a zero-dependency library at runtime.
+- **Zero runtime dependencies.** Do not add anything to `dependencies`.
+- `amqplib` stays in `peerDependencies` (and `devDependencies` for tests). Consumers provide their own version.
+- New `devDependencies` should be justified in the PR description.
+- Lock file is committed; `npm ci` in CI.
+- GitHub Actions can use semver tags (e.g. `@v4.2.2`) — no need to pin to commit SHA.
+
+## Public API surface
+
+Anything exported from `src/index.ts` is part of the published API. Treat changes there as breaking until the package reaches 1.0:
+
+- `slothConnect`, `slothClose`
+- `slothDelaySender` — generic over payload type `<TData>`
+- `setupDelayedMessageListener` — returns `SlothListenerHandle { consumerTag, close() }`
+- `SlothLogger`, `NoOpLogger`, `withLogLevel`, `SlothLogLevel`
+- `SlothConfig`, `assertSafeSlothConfig`, `getSlothQueueName`, `getSlothTarget`
+- `slothRequestExchangeName`, `slothResponseExchangeName`, `defaultListenerQueueExpiresMs`
+- Types: `SendDelayMessageParams<TData>`, `SlothListenerOptions`, `SlothListenerHandle`, `SlothSetup`
+
+## Resource hygiene
+
+Before running tests/builds in this repo, check for stray runners:
+
+```bash
+pgrep -a vitest
+```
+
+Don't spawn a new test run while another is still going.
+
+## Conventional commits
+
+Repo uses [release-please](https://github.com/googleapis/release-please) on `main` to drive releases. Commit subjects must follow Conventional Commits:
+
+- `feat:` — new functionality (minor bump)
+- `fix:` — bug fix (patch bump)
+- `refactor:`, `chore:`, `docs:`, `test:`, `ci:` — no version bump
+- `feat!:` / `fix!:` / `BREAKING CHANGE:` footer — major bump (pre-1.0: minor bump)
+
+Use `/commit` for a guided flow.

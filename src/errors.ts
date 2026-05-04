@@ -1,2 +1,1 @@
-export const errMessage = (e: unknown): string =>
-  e instanceof Error ? e.message : String(e);
+export const errMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));

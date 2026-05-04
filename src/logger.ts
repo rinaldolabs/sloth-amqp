@@ -33,6 +33,11 @@ export class NoOpLogger implements SlothLogger {
   }
 }
 
+// Returns the inner logger wrapped with `withLogLevel` if a level is given, otherwise unchanged.
+// Centralizes the conditional so callsites never widen the type to `unknown`.
+export const resolveLogger = (inner: SlothLogger, minLevel?: SlothLogLevel): SlothLogger =>
+  minLevel ? withLogLevel(inner, minLevel) : inner;
+
 // Wraps an existing SlothLogger and drops calls below `minLevel`. Use to suppress
 // noisy `debug`/`info` from this library while keeping the consumer's logger intact.
 export const withLogLevel = (inner: SlothLogger, minLevel: SlothLogLevel): SlothLogger => {

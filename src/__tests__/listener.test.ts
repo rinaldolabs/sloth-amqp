@@ -245,7 +245,7 @@ describe('setupDelayedMessageListener', () => {
 
     expect(channelCloseHandler).not.toBeNull();
     channelCloseHandler!();
-    expect(mockLogger.warn).toHaveBeenCalledWith('AMQP channel closed');
+    expect(mockLogger.warn).toHaveBeenCalledWith('sloth: listener channel closed');
     await handle.close();
   });
 
@@ -273,6 +273,22 @@ describe('setupDelayedMessageListener', () => {
       config: testConfig,
       onMessage: vi.fn(),
     });
+    await handle.close();
+  });
+
+  it('applies logLevel filter when provided', async () => {
+    const setupFn = await setup();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+      logLevel: 'warn',
+    });
+    // 'sloth: setting up listener...' is debug — should be filtered out
+    expect(mockLogger.debug).not.toHaveBeenCalled();
+    // 'sloth: listener ready...' is info — also filtered at warn
+    expect(mockLogger.info).not.toHaveBeenCalled();
     await handle.close();
   });
 });

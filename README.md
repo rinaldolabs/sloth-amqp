@@ -118,10 +118,10 @@ Implements the Sloth AMQP protocol as defined in [gitlab.com/unboundsoftware/slo
 
 Headers sent with each delayed message:
 
-| Header        | Type                   | Description                                                    |
-| ------------- | ---------------------- | -------------------------------------------------------------- |
-| `delay-until` | `int64` (unix seconds) | When to deliver the message                                    |
-| `target`      | `string` (AMQP URL)    | Response destination: `amqp://<serviceName>/<routingKey>/`     |
+| Header        | Type                   | Description                                                |
+| ------------- | ---------------------- | ---------------------------------------------------------- |
+| `delay-until` | `int64` (unix seconds) | When to deliver the message                                |
+| `target`      | `string` (AMQP URL)    | Response destination: `amqp://<serviceName>/<routingKey>/` |
 
 ## Related
 
