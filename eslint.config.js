@@ -36,6 +36,7 @@ export default tseslint.config(
       'dist/**',
       'node_modules/**',
       'coverage/**',
+      'examples/**',
       '.github/commitlint.config.cjs',
       'vitest.config.ts',
       'eslint.config.js',
