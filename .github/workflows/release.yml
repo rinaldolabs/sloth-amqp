@@ -17,22 +17,19 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
-    permissions:
-      contents: write
-      pull-requests: write
     steps:
       - name: Phase 2 - Create GitHub releases for merged release PRs
         id: release
         uses: googleapis/release-please-action@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           skip-github-pull-request: true
 
       - name: Phase 1 - Open or update release PR
         id: release-pr
         uses: googleapis/release-please-action@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           skip-github-release: true
 
   publish:
