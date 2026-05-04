@@ -29,7 +29,7 @@ describe('getSlothQueueName', () => {
 describe('getSlothTarget', () => {
   it('builds target header from serviceName and routingKey', () => {
     expect(getSlothTarget({ serviceName: 'my-service', routingKey: 'my.key' })).toBe(
-      'amqp://my-service/my.key/',
+      'amqp://my-service/my.key',
     );
   });
 });

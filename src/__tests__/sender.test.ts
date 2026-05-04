@@ -53,7 +53,7 @@ describe('slothDelaySender', () => {
       expect.objectContaining({
         headers: expect.objectContaining({
           'delay-until': expect.any(Number),
-          target: 'amqp://test-service/test.key/',
+          target: 'amqp://test-service/test.key',
         }),
       }),
     );

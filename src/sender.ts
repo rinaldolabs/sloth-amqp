@@ -44,7 +44,7 @@ export const slothDelaySender =
         {
           headers: {
             'delay-until': delayUntilUnix, // seconds, not ms — Sloth parses as int64 Unix timestamp
-            target: getSlothTarget(config), // amqp://{serviceName}/{routingKey}/ — response destination
+            target: getSlothTarget(config), // amqp://{serviceName}/{routingKey} — response destination
           },
         },
       );

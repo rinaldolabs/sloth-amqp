@@ -32,8 +32,10 @@ export const getSlothQueueName = (config: SlothConfig): string => {
   return `${slothResponseExchangeName}.queue.${config.serviceName}`;
 };
 
-// target header format: amqp://{serviceName}/{routingKey}/ — Sloth uses this to re-deliver the message
+// target header format: amqp://{serviceName}/{routingKey} — the Sloth server parses this with
+// url.Parse and uses parsed.Path[1:] as the routing key, so a trailing slash would corrupt it.
+// See gitlab.com/unboundsoftware/sloth/amqp/amqp.go (Sink.Publish).
 export const getSlothTarget = (config: SlothConfig): string => {
   assertSafeSlothConfig(config);
-  return `amqp://${config.serviceName}/${config.routingKey}/`;
+  return `amqp://${config.serviceName}/${config.routingKey}`;
 };

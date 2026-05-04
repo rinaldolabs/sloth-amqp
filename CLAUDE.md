@@ -44,7 +44,7 @@ Response queue:     sloth.headers.exchange.response.queue.<config.serviceName>
 
 Headers (on publish):
   delay-until: <int64 unix seconds>
-  target:      amqp://<config.serviceName>/<config.routingKey>/
+  target:      amqp://<config.serviceName>/<config.routingKey>
 
 Headers binding (on consume):
   service:     <config.serviceName>
