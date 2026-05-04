@@ -21,13 +21,13 @@ Your service
     │
     │  Publish to sloth.direct.exchange.request
     │  Routing key: "delay"
-    │  Headers: { "delay-until": <unix seconds>, "target": "amqp://backend-service/backend.delayed/" }
+    │  Headers: { "delay-until": <unix seconds>, "target": "amqp://<serviceName>/<routingKey>/" }
     ▼
 Sloth server (holds until delay-until)
     │
     │  (time elapsed)
     │  Delivers to sloth.headers.exchange.response
-    │  Queue: sloth.headers.exchange.response.queue.backend-service
+    │  Queue: sloth.headers.exchange.response.queue.<serviceName>
     ▼
 Your listener
 ```
@@ -39,12 +39,14 @@ Your listener
 ```ts
 import { slothConnect, slothDelaySender } from '@emilri/sloth-amqp';
 
+const config = { serviceName: 'my-service', routingKey: 'my.delayed' };
 const client = await slothConnect(process.env.AMQP_URL);
 const send = slothDelaySender(client);
 
 await send({
   data: { key: 'user.verify', userId: '123' },
   delayMinutes: 30,
+  config,
   logger: myLogger,
 });
 ```
@@ -54,8 +56,11 @@ await send({
 ```ts
 import { setupDelayedMessageListener, cleanup } from '@emilri/sloth-amqp';
 
+const config = { serviceName: 'my-service', routingKey: 'my.delayed' };
+
 await setupDelayedMessageListener({
   amqpUrl: process.env.AMQP_URL,
+  config,
   logger: myLogger, // optional — defaults to NoOpLogger
   onMessage: async (message) => {
     const data = JSON.parse(message.content.toString()) as { key: string };
@@ -80,7 +85,7 @@ const logger: SlothLogger = {
   warn: (msg, ...meta) => console.warn(msg, ...meta),
   error: (msg, ...meta) => console.error(msg, ...meta),
   debug: (msg, ...meta) => console.debug(msg, ...meta),
-  child: (meta) => ({ ...logger }),
+  child: () => logger,
 };
 ```
 
@@ -102,8 +107,8 @@ const client = await slothConnect(process.env.AMQP_URL, async (conn) => {
 import {
   slothRequestExchangeName, // "sloth.direct.exchange.request"
   slothResponseExchangeName, // "sloth.headers.exchange.response"
-  backendSlothRoutingKey, // "backend.delayed"
-  backendSlothServiceName, // "backend-service"
+  getSlothQueueName, // (config) => "sloth.headers.exchange.response.queue.<serviceName>"
+  getSlothTarget, // (config) => "amqp://<serviceName>/<routingKey>/"
 } from '@emilri/sloth-amqp';
 ```
 
@@ -113,10 +118,10 @@ Implements the Sloth AMQP protocol as defined in [gitlab.com/unboundsoftware/slo
 
 Headers sent with each delayed message:
 
-| Header        | Type                   | Description                                                          |
-| ------------- | ---------------------- | -------------------------------------------------------------------- |
-| `delay-until` | `int64` (unix seconds) | When to deliver the message                                          |
-| `target`      | `string` (AMQP URL)    | Response destination, e.g. `amqp://backend-service/backend.delayed/` |
+| Header        | Type                   | Description                                                    |
+| ------------- | ---------------------- | -------------------------------------------------------------- |
+| `delay-until` | `int64` (unix seconds) | When to deliver the message                                    |
+| `target`      | `string` (AMQP URL)    | Response destination: `amqp://<serviceName>/<routingKey>/`     |
 
 ## Related
 
