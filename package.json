@@ -1,0 +1,70 @@
+{
+  "name": "@emilri/sloth-amqp",
+  "version": "0.1.0",
+  "description": "Node.js TypeScript client for the Sloth delayed-message AMQP service",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": "^24.15.0",
+    "npm": "^11.4.0"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "peerDependencies": {
+    "amqplib": ">=1.0.0"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "20.5.3",
+    "@commitlint/config-conventional": "20.5.3",
+    "@cyclonedx/cyclonedx-npm": "4.2.1",
+    "@eslint/js": "^10.0.1",
+    "@types/amqplib": "0.10.8",
+    "@vitest/coverage-v8": "4.1.5",
+    "amqplib": "1.0.3",
+    "eslint": "10.3.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-security": "4.0.0",
+    "husky": "9.1.7",
+    "lint-staged": "16.4.0",
+    "lockfile-lint": "5.0.0",
+    "prettier": "3.8.3",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.59.1",
+    "vitest": "4.1.5"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest",
+    "test-once": "vitest --watch=false",
+    "coverage": "vitest run --coverage",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "lint:lockfile": "lockfile-lint",
+    "sbom": "cyclonedx-npm --output-file sbom.json",
+    "prepare": "husky",
+    "prepublishOnly": "npm run lint && npm run build && npm run coverage"
+  },
+  "keywords": [
+    "amqp",
+    "rabbitmq",
+    "sloth",
+    "delayed-messages",
+    "typescript"
+  ],
+  "homepage": "https://github.com/emilri/sloth-amqp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/emilri/sloth-amqp.git"
+  },
+  "license": "MIT",
+  "private": false
+}

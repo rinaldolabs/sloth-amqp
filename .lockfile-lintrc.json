@@ -1,0 +1,7 @@
+{
+  "path": "package-lock.json",
+  "type": "npm",
+  "validate-integrity": true,
+  "allowed-hosts": ["npm"],
+  "allowed-schemes": ["https:"]
+}
