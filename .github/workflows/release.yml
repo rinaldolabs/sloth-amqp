@@ -17,26 +17,22 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
-      - name: Generate GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.LI_CI_APP_ID }}
-          private-key: ${{ secrets.LI_CI_APP_PRIVATE_KEY }}
-
       - name: Phase 2 - Create GitHub releases for merged release PRs
         id: release
         uses: googleapis/release-please-action@v5
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           skip-github-pull-request: true
 
       - name: Phase 1 - Open or update release PR
         id: release-pr
         uses: googleapis/release-please-action@v5
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           skip-github-release: true
 
   publish:
