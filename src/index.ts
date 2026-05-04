@@ -1,10 +1,17 @@
 export { slothClose, slothConnect } from './connection.js';
-export { cleanup, setupDelayedMessageListener } from './listener.js';
-export { NoOpLogger } from './logger.js';
-export type { SlothLogger } from './logger.js';
+export { setupDelayedMessageListener } from './listener.js';
+export { NoOpLogger, withLogLevel } from './logger.js';
+export type { SlothLogger, SlothLogLevel } from './logger.js';
 export { slothDelaySender } from './sender.js';
-export type { SendDelayMessageParams, SlothListenerOptions, SlothSetup } from './types.js';
+export type {
+  SendDelayMessageParams,
+  SlothListenerHandle,
+  SlothListenerOptions,
+  SlothSetup,
+} from './types.js';
 export {
+  assertSafeSlothConfig,
+  defaultListenerQueueExpiresMs,
   getSlothQueueName,
   getSlothTarget,
   slothRequestExchangeName,

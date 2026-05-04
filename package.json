@@ -51,7 +51,7 @@
     "lint:lockfile": "lockfile-lint",
     "sbom": "cyclonedx-npm --output-file sbom.json",
     "prepare": "husky",
-    "prepublishOnly": "npm run build && npm run test-once"
+    "prepublishOnly": "npm run lint && npm run build && npm run coverage"
   },
   "keywords": [
     "amqp",

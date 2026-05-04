@@ -88,7 +88,7 @@ describe('slothDelaySender', () => {
 
     await expect(
       send({ data: { key: 'test' }, delayMinutes: 0, logger: mockLogger, config: testConfig }),
-    ).rejects.toThrow('delayMinutes must be a positive number');
+    ).rejects.toThrow('delayMinutes must be a positive finite number');
   });
 
   it('throws if delayMinutes is negative', async () => {
@@ -97,7 +97,80 @@ describe('slothDelaySender', () => {
 
     await expect(
       send({ data: { key: 'test' }, delayMinutes: -5, logger: mockLogger, config: testConfig }),
-    ).rejects.toThrow('delayMinutes must be a positive number');
+    ).rejects.toThrow('delayMinutes must be a positive finite number');
+  });
+
+  it('throws if delayMinutes is NaN', async () => {
+    const { slothDelaySender } = await import('../sender.js');
+    const send = slothDelaySender(mockClient as never);
+    await expect(
+      send({ data: { key: 'test' }, delayMinutes: NaN, logger: mockLogger, config: testConfig }),
+    ).rejects.toThrow('positive finite');
+  });
+
+  it('throws if delayMinutes is Infinity', async () => {
+    const { slothDelaySender } = await import('../sender.js');
+    const send = slothDelaySender(mockClient as never);
+    await expect(
+      send({
+        data: { key: 'test' },
+        delayMinutes: Infinity,
+        logger: mockLogger,
+        config: testConfig,
+      }),
+    ).rejects.toThrow('positive finite');
+  });
+
+  it('accepts arbitrary data shapes (no key required)', async () => {
+    const { slothDelaySender } = await import('../sender.js');
+    const send = slothDelaySender(mockClient as never);
+    await expect(
+      send({
+        data: { foo: 'bar', n: 1 },
+        delayMinutes: 1,
+        logger: mockLogger,
+        config: testConfig,
+      }),
+    ).resolves.not.toThrow();
+  });
+
+  it('uses logLabel in log output when provided', async () => {
+    const { slothDelaySender } = await import('../sender.js');
+    const send = slothDelaySender(mockClient as never);
+    await send({
+      data: { x: 1 },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+      logLabel: 'reminder',
+    });
+    expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('reminder'));
+  });
+
+  it('throws if config has invalid serviceName', async () => {
+    const { slothDelaySender } = await import('../sender.js');
+    const send = slothDelaySender(mockClient as never);
+    await expect(
+      send({
+        data: { key: 'test' },
+        delayMinutes: 1,
+        logger: mockLogger,
+        config: { serviceName: 'bad/name', routingKey: 'k' },
+      }),
+    ).rejects.toThrow('serviceName');
+  });
+
+  it('warns when publish returns false (backpressure)', async () => {
+    const { slothDelaySender } = await import('../sender.js');
+    mockPublish.mockReturnValueOnce(false);
+    const send = slothDelaySender(mockClient as never);
+    await send({
+      data: { key: 'test' },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+    });
+    expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('backpressure'));
   });
 
   it('sets delay-until as unix seconds', async () => {
