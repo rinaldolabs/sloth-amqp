@@ -1,0 +1,21 @@
+on:
+  pull_request:
+    types: [opened, edited]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+name: conventional-release-labels
+jobs:
+  label:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: bcoe/conventional-release-labels@aee1abd4ed51aaae5afe52b87b2c9d1a29d5a1e7 # v1.3.1
+        with:
+          type_labels: '{"feat": "feature", "fix": "bug", "breaking": "breaking"}'

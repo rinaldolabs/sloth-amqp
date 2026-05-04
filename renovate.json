@@ -1,0 +1,123 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "rangeStrategy": "bump",
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "platformAutomerge": true,
+  "rebaseWhen": "behind-base-branch",
+  "prNotPendingHours": 12,
+  "minimumReleaseAge": "3 days",
+  "schedule": ["after 8pm every weekday", "every weekend"],
+  "timezone": "Europe/Stockholm",
+  "separateMinorPatch": false,
+  "separateMajorMinor": true,
+  "prHourlyLimit": 2,
+  "prConcurrentLimit": 3,
+  "labels": ["deps"],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"],
+    "schedule": ["at any time"]
+  },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 4am on monday"]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.nvmrc$/"],
+      "matchStrings": ["(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version",
+      "versioningTemplate": "node"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^package\\.json$/"],
+      "matchStrings": [
+        "\"engines\"\\s*:\\s*\\{[^}]*\"node\"\\s*:\\s*\"\\^(?<currentValue>\\d+\\.\\d+\\.\\d+)\"[^}]*\\}"
+      ],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version",
+      "versioningTemplate": "node"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
+      "matchStrings": ["node-version:\\s*'(?<currentValue>\\d+\\.\\d+\\.\\d+)'"],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version",
+      "versioningTemplate": "node"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Node runtime: .nvmrc + engines + CI in one PR",
+      "groupName": "Node runtime (all files)",
+      "matchManagers": ["custom.regex", "npm"],
+      "matchDatasources": ["node-version", "npm"],
+      "matchPackageNames": ["/^node$/", "@types/node"],
+      "separateMinorPatch": false,
+      "separateMultipleMajor": false,
+      "labels": ["deps", "node-runtime"]
+    },
+    {
+      "description": "Auto-merge minor/patch for production deps",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true,
+      "automergeType": "pr",
+      "labels": ["deps", "automerge"]
+    },
+    {
+      "description": "Auto-merge all devDependency updates (low risk)",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "automerge": true,
+      "automergeType": "pr",
+      "labels": ["deps", "automerge"]
+    },
+    {
+      "description": "Block automerge for majors",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["deps", "major"]
+    },
+    {
+      "description": "Bypass minimumReleaseAge for lockfile maintenance",
+      "matchUpdateTypes": ["lockFileMaintenance"],
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "vitest + vite internals co-versioned",
+      "groupName": "vite-vitest",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["/^vite$/", "/^vitest$/", "/^@vitest\\//", "/^vite-/"]
+    },
+    {
+      "description": "@typescript-eslint/* co-versioned monorepo",
+      "groupName": "typescript-eslint",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["/^@typescript-eslint\\/$/", "/^typescript-eslint$/"]
+    },
+    {
+      "description": "@commitlint/* co-versioned monorepo",
+      "groupName": "commitlint",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["/^@commitlint\\//"]
+    },
+    {
+      "description": "eslint core + plugins together",
+      "groupName": "eslint",
+      "matchManagers": ["npm"],
+      "matchPackageNames": [
+        "/^eslint$/",
+        "/^@eslint\\/$/",
+        "/^eslint-plugin-/",
+        "/^eslint-config-/"
+      ]
+    }
+  ]
+}
