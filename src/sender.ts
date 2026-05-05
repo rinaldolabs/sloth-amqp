@@ -28,6 +28,8 @@ export const resolveDelayUnixSeconds = (
   params: DelaySpec,
 ): { delayUntilUnix: number; delayDesc: string } => {
   const { delayUntil, delaySeconds, delayMinutes } = params;
+  const setCount = [delayUntil, delaySeconds, delayMinutes].filter((v) => v !== undefined).length;
+  if (setCount !== 1) throw new Error('exactly one of delayMinutes, delaySeconds, or delayUntil must be provided');
   const nowSec = Math.floor(Date.now() / 1000);
 
   if (delayUntil !== undefined) {

@@ -33,6 +33,26 @@ describe('resolveDelayUnixSeconds', () => {
     expect(delayDesc).toContain('until=');
   });
 
+  it('throws when both delayMinutes and delaySeconds are provided', async () => {
+    const { resolveDelayUnixSeconds } = await import('../sender.js');
+    expect(() => resolveDelayUnixSeconds({ delayMinutes: 5, delaySeconds: 30 } as never)).toThrow('exactly one');
+  });
+
+  it('throws when both delayMinutes and delayUntil are provided', async () => {
+    const { resolveDelayUnixSeconds } = await import('../sender.js');
+    expect(() => resolveDelayUnixSeconds({ delayMinutes: 5, delayUntil: new Date(Date.now() + 60_000) } as never)).toThrow('exactly one');
+  });
+
+  it('throws when both delaySeconds and delayUntil are provided', async () => {
+    const { resolveDelayUnixSeconds } = await import('../sender.js');
+    expect(() => resolveDelayUnixSeconds({ delaySeconds: 30, delayUntil: new Date(Date.now() + 60_000) } as never)).toThrow('exactly one');
+  });
+
+  it('throws when all three delay fields are provided', async () => {
+    const { resolveDelayUnixSeconds } = await import('../sender.js');
+    expect(() => resolveDelayUnixSeconds({ delayMinutes: 5, delaySeconds: 30, delayUntil: new Date(Date.now() + 60_000) } as never)).toThrow('exactly one');
+  });
+
   it('throws if delayMinutes is zero', async () => {
     const { resolveDelayUnixSeconds } = await import('../sender.js');
     expect(() => resolveDelayUnixSeconds({ delayMinutes: 0 })).toThrow('delayMinutes must be a positive finite number');
