@@ -1,0 +1,36 @@
+# Two-tier hook setup:
+# - husky + lint-staged (in package.json) handle fast Node-side checks (eslint --fix, prettier).
+# - pre-commit (this file) handles language-agnostic file hygiene that ESLint doesn't see.
+#
+# Install: pipx install pre-commit && pre-commit install
+# Run all: pre-commit run --all-files
+# CI mirrors this via the `pre-commit` job in .github/workflows/ci.yml.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+        # Skip files with comments / trailing commas that aren't strict JSON.
+        exclude: |
+          (?x)^(
+            tsconfig.*\.json|
+            \.vscode/.*\.json
+          )$
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: end-of-file-fixer
+        # Lockfile + generated files manage their own newlines.
+        exclude: ^(package-lock\.json|sbom\.json|coverage/|dist/)
+      - id: trailing-whitespace
+        exclude: ^(package-lock\.json|coverage/|dist/)
+      - id: no-commit-to-branch
+        args: [--branch, main]
+
+# renovate-config-validator is invoked in CI directly via npx (see ci.yml lint job)
+# rather than as a pre-commit hook — its hook requires pre-commit >=3.6.

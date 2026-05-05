@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/rinaldolabs/sloth-amqp/security/advisories/new
+    about: Report security issues privately via GitHub's private vulnerability reporting.
+  - name: Sloth server (Go)
+    url: https://gitlab.com/unboundsoftware/sloth
+    about: Issues with the Sloth server itself (delay logic, exchanges, wire protocol) belong upstream.

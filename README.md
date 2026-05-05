@@ -144,6 +144,16 @@ These are deliberate API choices, not accidents. The wire protocol — exchange 
 - [@opzkit/nodeamqp](https://www.npmjs.com/package/@opzkit/nodeamqp) — event streams and service request/response
 - [Sloth server](https://gitlab.com/unboundsoftware/sloth) — the delay service this client connects to
 
+## Acknowledgements
+
+Built on the work of [Unbound Software AB](https://gitlab.com/unboundsoftware) and [opzkit](https://github.com/opzkit). See [NOTICE](./NOTICE) for the full attribution list. Specifically:
+
+- **[`gitlab.com/unboundsoftware/sloth`](https://gitlab.com/unboundsoftware/sloth)** — the Sloth delayed-message AMQP server (MIT). The wire protocol implemented here (`sloth.direct.exchange.request`, `sloth.headers.exchange.response`, `delay-until` / `target` headers) comes directly from the upstream Sloth `amqp` source plugin.
+- **[`gitlab.com/unboundsoftware/sloth/client-amqp`](https://gitlab.com/unboundsoftware/sloth/client-amqp)** — the canonical Go client (MIT). Used as the API-shape and behavior reference; the [Compared to the Go client](#compared-to-the-go-client) section above documents intentional divergences.
+- **[`github.com/opzkit/nodeamqp`](https://github.com/opzkit/nodeamqp)** — sibling Node.js AMQP library by the same upstream maintainer (MIT). Project scaffolding (release-please, conventional commits, peer-dependency pattern) was modeled on it.
+
+Standards and specs this project follows: [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/), [Semantic Versioning 2.0.0](https://semver.org/), [Keep a Changelog](https://keepachangelog.com/), and the [AMQP 0-9-1 protocol](https://www.rabbitmq.com/tutorials/amqp-concepts).
+
 ## License
 
-MIT
+MIT — see [LICENSE](./LICENSE).

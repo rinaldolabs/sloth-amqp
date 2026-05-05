@@ -22,7 +22,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/__tests__/**/*.ts'],
+    files: ['src/__tests__/**/*.ts', 'test/**/*.ts'],
     rules: {
       '@typescript-eslint/no-non-null-assertion': 'off',
       '@typescript-eslint/unbound-method': 'off',
@@ -39,6 +39,7 @@ export default tseslint.config(
       'examples/**',
       '.github/commitlint.config.cjs',
       'vitest.config.ts',
+      'vitest.integration.config.ts',
       'eslint.config.js',
     ],
   },
