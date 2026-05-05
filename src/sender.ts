@@ -1,31 +1,82 @@
 import type { Channel, ChannelModel } from 'amqplib';
 import { errMessage } from './errors.js';
 import { resolveLogger } from './logger.js';
-import type { SendDelayMessageParams } from './types.js';
+import type { DelaySpec, SendDelayMessageParams } from './types.js';
 import { assertSafeSlothConfig, getSlothTarget, slothRequestExchangeName } from './utils.js';
+
+/** ~100 years in seconds — prevents unix timestamp overflow in the delay-until header. */
+export const MAX_DELAY_SECONDS = 100 * 365 * 24 * 3600;
+
+/**
+ * Strips ASCII control characters (U+0000–U+001F, U+007F) and truncates to 200 chars
+ * so caller-supplied labels cannot inject newlines or escape sequences into log output.
+ */
+const segmenter = new Intl.Segmenter();
+const isControlChar = (c: string): boolean => { const n = c.codePointAt(0); return n !== undefined && (n <= 0x1f || n === 0x7f); };
+export const sanitizeLabel = (raw: string): string =>
+  Array.from(segmenter.segment(raw), (s) => s.segment)
+    .filter((c) => !isControlChar(c))
+    .join('')
+    .slice(0, 200);
+
+/**
+ * Resolves whichever delay variant is set into an absolute unix timestamp (seconds)
+ * and a human-readable description for log lines.
+ * Throws on invalid, past, or out-of-range values.
+ */
+export const resolveDelayUnixSeconds = (
+  params: DelaySpec,
+): { delayUntilUnix: number; delayDesc: string } => {
+  const { delayUntil, delaySeconds, delayMinutes } = params;
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  if (delayUntil !== undefined) {
+    const ms = delayUntil.getTime();
+    if (!Number.isFinite(ms)) throw new Error('delayUntil is an invalid Date');
+    const delayUntilUnix = Math.floor(ms / 1000);
+    if (delayUntilUnix <= nowSec) throw new Error('delayUntil must be in the future');
+    if (delayUntilUnix - nowSec > MAX_DELAY_SECONDS) throw new Error('delayUntil exceeds maximum allowed delay of 100 years');
+    return { delayUntilUnix, delayDesc: `until=${delayUntil.toISOString()}` };
+  }
+
+  if (delaySeconds !== undefined) {
+    if (!Number.isFinite(delaySeconds) || delaySeconds <= 0) throw new Error('delaySeconds must be a positive finite number');
+    if (delaySeconds > MAX_DELAY_SECONDS) throw new Error('delaySeconds exceeds maximum allowed delay of 100 years');
+    return {
+      delayUntilUnix: Math.floor((Date.now() + delaySeconds * 1000) / 1000),
+      delayDesc: `delay=${String(delaySeconds)}s`,
+    };
+  }
+
+  if (!Number.isFinite(delayMinutes) || delayMinutes <= 0) throw new Error('delayMinutes must be a positive finite number');
+  if (delayMinutes * 60 > MAX_DELAY_SECONDS) throw new Error('delayMinutes exceeds maximum allowed delay of 100 years');
+  return {
+    delayUntilUnix: Math.floor((Date.now() + delayMinutes * 60 * 1000) / 1000),
+    delayDesc: `delay=${String(delayMinutes)}min`,
+  };
+};
+
+/** Serializes data to a Buffer, throwing a clear error if the value is not JSON-serializable. */
+export const serializeData = (data: unknown): Buffer => {
+  try {
+    return Buffer.from(JSON.stringify(data));
+  } catch {
+    throw new Error('data is not JSON-serializable');
+  }
+};
 
 export const slothDelaySender =
   (client: ChannelModel) =>
-  async <TData>({
-    data,
-    delayMinutes,
-    logger: rawLogger,
-    config,
-    logLabel,
-    logLevel,
-  }: SendDelayMessageParams<TData>): Promise<void> => {
+  async <TData>(params: SendDelayMessageParams<TData>): Promise<void> => {
+    const { data, logger: rawLogger, config, logLabel, logLevel } = params;
     const logger = resolveLogger(rawLogger, logLevel);
-    if (!Number.isFinite(delayMinutes) || delayMinutes <= 0) {
-      throw new Error('delayMinutes must be a positive finite number');
-    }
     assertSafeSlothConfig(config);
 
-    const label = logLabel ?? 'message';
-    const delayUntilUnix = Math.floor((Date.now() + delayMinutes * 60 * 1000) / 1000);
+    const label = logLabel !== undefined ? sanitizeLabel(logLabel) : 'message';
+    const { delayUntilUnix, delayDesc } = resolveDelayUnixSeconds(params);
+    const body = serializeData(data);
 
-    logger.debug(
-      `sloth: scheduling ${label} for ${config.serviceName}/${config.routingKey} in ${String(delayMinutes)}min`,
-    );
+    logger.debug(`sloth: scheduling ${label} for ${config.serviceName}/${config.routingKey} (${delayDesc})`);
 
     let chan: Channel | null = null;
     const startTime = Date.now();
@@ -33,34 +84,20 @@ export const slothDelaySender =
     try {
       chan = await client.createChannel();
 
-      // Publishes to sloth.direct.exchange.request with routing key "delay" —
-      // matches goamqp ServiceRequestConsumer("delay", ...) in amqp.go.
       // assertExchange per send is acceptable — this is not a hot path.
+      // Routing key "delay" matches goamqp ServiceRequestConsumer("delay", ...) in amqp.go.
       await chan.assertExchange(slothRequestExchangeName, 'direct', { durable: true });
-      const ok = chan.publish(
-        slothRequestExchangeName,
-        'delay',
-        Buffer.from(JSON.stringify(data)),
-        {
-          headers: {
-            'delay-until': delayUntilUnix, // seconds, not ms — Sloth parses as int64 Unix timestamp
-            target: getSlothTarget(config), // amqp://{serviceName}/{routingKey} — response destination
-          },
+      const ok = chan.publish(slothRequestExchangeName, 'delay', body, {
+        headers: {
+          'delay-until': delayUntilUnix, // seconds — Sloth parses as int64 Unix timestamp
+          target: getSlothTarget(config), // amqp://{serviceName}/{routingKey}
         },
-      );
-      if (!ok) {
-        logger.warn('sloth: publish backpressured (channel write buffer full)');
-      }
+      });
+      if (!ok) logger.warn('sloth: publish back-pressured (channel write buffer full)');
 
-      const duration = Date.now() - startTime;
-      logger.info(
-        `sloth: scheduled ${label} (delay=${String(delayMinutes)}min, took=${String(duration)}ms)`,
-      );
+      logger.info(`sloth: scheduled ${label} (${delayDesc}, took=${String(Date.now() - startTime)}ms)`);
     } catch (error) {
-      const duration = Date.now() - startTime;
-      logger.error(
-        `sloth: failed to schedule ${label} after ${String(duration)}ms: ${errMessage(error)}`,
-      );
+      logger.error(`sloth: failed to schedule ${label} after ${String(Date.now() - startTime)}ms: ${errMessage(error)}`);
       throw error;
     } finally {
       if (chan) {
