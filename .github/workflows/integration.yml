@@ -1,0 +1,40 @@
+name: Integration
+
+# Integration tests run a real RabbitMQ container via testcontainers and verify
+# our publish/consume wire format against it. Kept separate from the main CI
+# gate because they (a) need Docker, (b) are slower (~30s container startup),
+# and (c) are not on the critical path for unit-level correctness.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'test/integration/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/integration.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: RabbitMQ wire-protocol test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          # testcontainers auto-detects Docker on ubuntu runners; no extra config needed.
+          DEBUG: 'testcontainers'

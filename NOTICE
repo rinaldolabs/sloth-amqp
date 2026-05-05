@@ -1,0 +1,72 @@
+@rinaldolabs/sloth-amqp
+Copyright (c) 2026 Emil Rinaldo
+
+==============================================================================
+Upstream attribution (derived work)
+==============================================================================
+
+This product includes work derived from or inspired by the following
+upstream codebases. All three are MIT-licensed; see each upstream
+repository for the full license text.
+
+------------------------------------------------------------------------------
+
+Sloth — delayed-message delivery service (MIT)
+  https://gitlab.com/unboundsoftware/sloth
+  Copyright (c) Unbound Software Development Svenska AB
+
+  The AMQP wire protocol implemented in this package (request/response
+  exchanges, routing keys, "delay-until" and "target" header semantics, queue
+  naming conventions) is defined by Sloth's `amqp` source plugin:
+    https://gitlab.com/unboundsoftware/sloth/amqp
+
+------------------------------------------------------------------------------
+
+sloth/client-amqp — canonical Go client for Sloth (MIT)
+  https://gitlab.com/unboundsoftware/sloth/client-amqp
+  Copyright (c) Unbound Software Development Svenska AB
+
+  Used as the API-shape and behavior reference for this TypeScript client.
+  Intentional API divergences are documented in README.md ("Compared to the
+  Go client").
+
+------------------------------------------------------------------------------
+
+@opzkit/nodeamqp — Node.js AMQP library (MIT)
+  https://github.com/opzkit/nodeamqp
+  Copyright (c) Joakim Olsson <joakim@unbound.se>
+
+  Project scaffolding (release-please configuration, conventional-commits
+  flow, peer-dependency pattern for amqplib) was modeled on this project.
+
+==============================================================================
+References (acknowledgement only — no licensing claim)
+==============================================================================
+
+Standards and specifications this project follows. These are not derived
+work; their licenses vary (W3C, ISO, OASIS, project-specific) and are not
+reproduced here.
+
+  - AMQP 0-9-1 protocol — https://www.rabbitmq.com/tutorials/amqp-concepts
+  - Conventional Commits 1.0.0 — https://www.conventionalcommits.org/en/v1.0.0/
+  - Semantic Versioning 2.0.0 — https://semver.org/
+  - Keep a Changelog — https://keepachangelog.com/
+  - SPDX MIT license identifier — https://spdx.org/licenses/MIT.html
+  - CycloneDX SBOM — https://cyclonedx.org/
+  - SLSA / npm provenance — https://docs.npmjs.com/generating-provenance-statements
+
+Tooling used in development and release. Each project ships its own
+license; refer to the upstream package for terms.
+
+  - amqplib (peer dep) — https://github.com/amqp-node/amqplib
+  - TypeScript — https://www.typescriptlang.org/
+  - Vitest — https://vitest.dev/
+  - ESLint + typescript-eslint — https://typescript-eslint.io/
+  - Prettier — https://prettier.io/
+  - release-please — https://github.com/googleapis/release-please
+  - commitlint — https://commitlint.js.org/
+  - Renovate — https://docs.renovatebot.com/
+  - Husky — https://typicode.github.io/husky/
+  - lockfile-lint — https://github.com/lirantal/lockfile-lint
+  - CycloneDX npm — https://github.com/CycloneDX/cyclonedx-node-npm
+  - Testcontainers for Node.js — https://node.testcontainers.org/

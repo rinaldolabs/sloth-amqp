@@ -1,0 +1,44 @@
+name: PR title
+
+# Validates that the PR title is a Conventional Commits 1.0.0 message. The PR title
+# becomes the commit subject after squash-merge, so this gate keeps release-please
+# happy and the changelog clean. Complements wagoid/commitlint-github-action which
+# validates every commit on the branch.
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: amannn/action-semantic-pull-request@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            style
+            refactor
+            perf
+            test
+            build
+            ci
+            chore
+            revert
+          requireScope: false
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            The PR title subject (after the type and optional scope) must start with a lowercase letter.
+            Examples: "feat: add publisher" or "fix(listener): handle channel close" — not "feat: Add publisher".

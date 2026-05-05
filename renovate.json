@@ -50,6 +50,13 @@
       "depNameTemplate": "node",
       "datasourceTemplate": "node-version",
       "versioningTemplate": "node"
+    },
+    {
+      "description": "Track the RabbitMQ image used in integration tests",
+      "customType": "regex",
+      "managerFilePatterns": ["/^test/integration/.*\\.test\\.ts$/"],
+      "matchStrings": ["GenericContainer\\(['\"](?<depName>[a-z0-9-]+):(?<currentValue>[^'\"]+)['\"]\\)"],
+      "datasourceTemplate": "docker"
     }
   ],
   "packageRules": [
@@ -80,6 +87,14 @@
       "labels": ["deps", "automerge"]
     },
     {
+      "description": "Auto-merge minor/patch GitHub Actions updates",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "automerge": true,
+      "automergeType": "pr",
+      "labels": ["deps", "github-actions", "automerge"]
+    },
+    {
       "description": "Block automerge for majors",
       "matchUpdateTypes": ["major"],
       "automerge": false,
@@ -94,13 +109,13 @@
       "description": "vitest + vite internals co-versioned",
       "groupName": "vite-vitest",
       "matchManagers": ["npm"],
-      "matchPackageNames": ["/^vite$/", "/^vitest$/", "/^@vitest\\//", "/^vite-/"]
+      "matchPackageNames": ["/^vite$/", "/^vitest$/", "/^@vitest\\/.+/", "/^vite-/"]
     },
     {
       "description": "@typescript-eslint/* co-versioned monorepo",
       "groupName": "typescript-eslint",
       "matchManagers": ["npm"],
-      "matchPackageNames": ["/^@typescript-eslint\\/$/", "/^typescript-eslint$/"]
+      "matchPackageNames": ["/^@typescript-eslint\\/.+/", "/^typescript-eslint$/"]
     },
     {
       "description": "@commitlint/* co-versioned monorepo",
@@ -114,7 +129,7 @@
       "matchManagers": ["npm"],
       "matchPackageNames": [
         "/^eslint$/",
-        "/^@eslint\\/$/",
+        "/^@eslint\\/.+/",
         "/^eslint-plugin-/",
         "/^eslint-config-/"
       ]

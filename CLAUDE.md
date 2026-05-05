@@ -15,22 +15,34 @@ npm run lint          # eslint (zero warnings)
 npm run lint:fix      # eslint --fix
 npm run lint:lockfile # validate package-lock.json (host/scheme/integrity)
 npm run sbom          # generate sbom.json (CycloneDX)
+npm run test:integration  # vitest against a real RabbitMQ via testcontainers (needs Docker)
+```
+
+Run a single test file or pattern:
+
+```bash
+npm test -- --run src/__tests__/listener.test.ts
+npm test -- --run -t "publishes to the request exchange"
+npm run test:integration -- --run -t "consume path"
 ```
 
 ## Architecture
 
-```
-src/
-  connection.ts  — slothConnect(url, ...setups), slothClose
-  sender.ts      — slothDelaySender(client) → async send<TData>(...)
-  listener.ts    — setupDelayedMessageListener → SlothListenerHandle
-  logger.ts      — SlothLogger interface, NoOpLogger, withLogLevel filter
-  errors.ts      — errMessage(unknown) → string
-  types.ts       — public param/handle types, SlothSetup
-  utils.ts       — protocol constants, SlothConfig, identifier validation
-  index.ts       — public API barrel (excluded from coverage)
-  __tests__/     — co-located vitest specs
-```
+This package implements a single messaging pattern: **delayed-message request/response over Sloth**. A caller publishes a message with a `delay-until` timestamp; Sloth holds it until the time arrives and re-delivers to the caller's response queue.
+
+### Modules (all under `src/`)
+
+- **`connection.ts`** — `slothConnect(url, ...setups)` opens an `amqplib.ChannelModel`, runs optional `SlothSetup` functions, returns the model. `slothClose` closes it. Caller owns the connection.
+- **`sender.ts`** — `slothDelaySender(client)` returns an async `send<TData>(params)` function. Publishes to `sloth.direct.exchange.request` with routing key `delay`, headers `delay-until` (unix seconds) and `target` (`amqp://<service>/<key>`), body `JSON.stringify(data)`. Channel is opened per call and closed in `finally`.
+- **`listener.ts`** — `setupDelayedMessageListener(opts)` declares the response queue, binds it to `sloth.headers.exchange.response` with the headers binding `service: <serviceName>`, registers the consumer. Returns a `SlothListenerHandle { consumerTag, close() }`. `noAck: false`; handler success → `ack`, handler failure → `nack(requeue=false)` so the broker DLX takes over.
+- **`logger.ts`** — `SlothLogger` interface (info/warn/error/debug/child). `NoOpLogger` is the default. `withLogLevel(logger, level)` filters by minimum level.
+- **`errors.ts`** — `errMessage(unknown)` extracts a safe string from any caught value. Used everywhere to avoid leaking stack traces.
+- **`types.ts`** — public param shapes (`SendDelayMessageParams<TData>`, `SlothListenerOptions`, `SlothListenerHandle`, `SlothSetup`).
+- **`utils.ts`** — protocol constants (exchange names, routing keys, default queue TTL), `SlothConfig`, and `assertSafeSlothConfig` which validates `serviceName`/`routingKey` against `[A-Za-z0-9._-]+` before they flow into AMQP routing strings.
+- **`index.ts`** — public-API barrel; excluded from coverage.
+- **`__tests__/`** — co-located vitest specs (one per module).
+
+Integration tests live under `test/integration/` and run against a real RabbitMQ container via testcontainers — see `npm run test:integration`. They are excluded from the unit-coverage gate.
 
 ## Sloth wire protocol
 
