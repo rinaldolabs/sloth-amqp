@@ -2,7 +2,13 @@ export { slothClose, slothConnect } from './connection.js';
 export { setupDelayedMessageListener } from './listener.js';
 export { NoOpLogger, withLogLevel } from './logger.js';
 export type { SlothLogger, SlothLogLevel } from './logger.js';
-export { MAX_DELAY_SECONDS, resolveDelayUnixSeconds, sanitizeLabel, serializeData, slothDelaySender } from './sender.js';
+export {
+  MAX_DELAY_SECONDS,
+  resolveDelayUnixSeconds,
+  sanitizeLabel,
+  serializeData,
+  slothDelaySender,
+} from './sender.js';
 export type {
   DelaySpec,
   SendDelayMessageParams,

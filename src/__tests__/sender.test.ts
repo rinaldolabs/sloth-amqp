@@ -11,8 +11,13 @@ const FIXED_NOW_SEC = Math.floor(FIXED_NOW_MS / 1000);
 // ─── pure helper tests (no mocks needed) ─────────────────────────────────────
 
 describe('resolveDelayUnixSeconds', () => {
-  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(FIXED_NOW_MS); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW_MS);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it('resolves delayMinutes to unix seconds', async () => {
     const { resolveDelayUnixSeconds } = await import('../sender.js');
@@ -43,27 +48,47 @@ describe('resolveDelayUnixSeconds', () => {
 
   it('throws when both delayMinutes and delaySeconds are provided', async () => {
     const { resolveDelayUnixSeconds } = await import('../sender.js');
-    expect(() => resolveDelayUnixSeconds({ delayMinutes: 5, delaySeconds: 30 } as never)).toThrow('exactly one');
+    expect(() => resolveDelayUnixSeconds({ delayMinutes: 5, delaySeconds: 30 } as never)).toThrow(
+      'exactly one',
+    );
   });
 
   it('throws when both delayMinutes and delayUntil are provided', async () => {
     const { resolveDelayUnixSeconds } = await import('../sender.js');
-    expect(() => resolveDelayUnixSeconds({ delayMinutes: 5, delayUntil: new Date(FIXED_NOW_MS + 60_000) } as never)).toThrow('exactly one');
+    expect(() =>
+      resolveDelayUnixSeconds({
+        delayMinutes: 5,
+        delayUntil: new Date(FIXED_NOW_MS + 60_000),
+      } as never),
+    ).toThrow('exactly one');
   });
 
   it('throws when both delaySeconds and delayUntil are provided', async () => {
     const { resolveDelayUnixSeconds } = await import('../sender.js');
-    expect(() => resolveDelayUnixSeconds({ delaySeconds: 30, delayUntil: new Date(FIXED_NOW_MS + 60_000) } as never)).toThrow('exactly one');
+    expect(() =>
+      resolveDelayUnixSeconds({
+        delaySeconds: 30,
+        delayUntil: new Date(FIXED_NOW_MS + 60_000),
+      } as never),
+    ).toThrow('exactly one');
   });
 
   it('throws when all three delay fields are provided', async () => {
     const { resolveDelayUnixSeconds } = await import('../sender.js');
-    expect(() => resolveDelayUnixSeconds({ delayMinutes: 5, delaySeconds: 30, delayUntil: new Date(FIXED_NOW_MS + 60_000) } as never)).toThrow('exactly one');
+    expect(() =>
+      resolveDelayUnixSeconds({
+        delayMinutes: 5,
+        delaySeconds: 30,
+        delayUntil: new Date(FIXED_NOW_MS + 60_000),
+      } as never),
+    ).toThrow('exactly one');
   });
 
   it('throws if delayMinutes is zero', async () => {
     const { resolveDelayUnixSeconds } = await import('../sender.js');
-    expect(() => resolveDelayUnixSeconds({ delayMinutes: 0 })).toThrow('delayMinutes must be a positive finite number');
+    expect(() => resolveDelayUnixSeconds({ delayMinutes: 0 })).toThrow(
+      'delayMinutes must be a positive finite number',
+    );
   });
 
   it('throws if delayMinutes is negative', async () => {
@@ -83,12 +108,16 @@ describe('resolveDelayUnixSeconds', () => {
 
   it('throws if delayMinutes exceeds 100 years', async () => {
     const { resolveDelayUnixSeconds, MAX_DELAY_SECONDS } = await import('../sender.js');
-    expect(() => resolveDelayUnixSeconds({ delayMinutes: (MAX_DELAY_SECONDS / 60) + 1 })).toThrow('exceeds maximum');
+    expect(() => resolveDelayUnixSeconds({ delayMinutes: MAX_DELAY_SECONDS / 60 + 1 })).toThrow(
+      'exceeds maximum',
+    );
   });
 
   it('throws if delaySeconds is zero', async () => {
     const { resolveDelayUnixSeconds } = await import('../sender.js');
-    expect(() => resolveDelayUnixSeconds({ delaySeconds: 0 })).toThrow('delaySeconds must be a positive finite number');
+    expect(() => resolveDelayUnixSeconds({ delaySeconds: 0 })).toThrow(
+      'delaySeconds must be a positive finite number',
+    );
   });
 
   it('throws if delaySeconds is negative', async () => {
@@ -108,23 +137,31 @@ describe('resolveDelayUnixSeconds', () => {
 
   it('throws if delaySeconds exceeds 100 years', async () => {
     const { resolveDelayUnixSeconds, MAX_DELAY_SECONDS } = await import('../sender.js');
-    expect(() => resolveDelayUnixSeconds({ delaySeconds: MAX_DELAY_SECONDS + 1 })).toThrow('exceeds maximum');
+    expect(() => resolveDelayUnixSeconds({ delaySeconds: MAX_DELAY_SECONDS + 1 })).toThrow(
+      'exceeds maximum',
+    );
   });
 
   it('throws if delayUntil is an invalid Date', async () => {
     const { resolveDelayUnixSeconds } = await import('../sender.js');
-    expect(() => resolveDelayUnixSeconds({ delayUntil: new Date('not-a-date') })).toThrow('delayUntil is an invalid Date');
+    expect(() => resolveDelayUnixSeconds({ delayUntil: new Date('not-a-date') })).toThrow(
+      'delayUntil is an invalid Date',
+    );
   });
 
   it('returns pastDateWarning when delayUntil is in the past', async () => {
     const { resolveDelayUnixSeconds } = await import('../sender.js');
-    const { pastDateWarning } = resolveDelayUnixSeconds({ delayUntil: new Date(FIXED_NOW_MS - 1000) });
+    const { pastDateWarning } = resolveDelayUnixSeconds({
+      delayUntil: new Date(FIXED_NOW_MS - 1000),
+    });
     expect(pastDateWarning).toMatch(/past/);
   });
 
   it('returns no pastDateWarning when delayUntil is in the future', async () => {
     const { resolveDelayUnixSeconds } = await import('../sender.js');
-    const { pastDateWarning } = resolveDelayUnixSeconds({ delayUntil: new Date(FIXED_NOW_MS + 60_000) });
+    const { pastDateWarning } = resolveDelayUnixSeconds({
+      delayUntil: new Date(FIXED_NOW_MS + 60_000),
+    });
     expect(pastDateWarning).toBeUndefined();
   });
 
@@ -203,7 +240,11 @@ describe('serializeData', () => {
 const mockChannelClose = vi.fn().mockResolvedValue(undefined);
 const mockPublish = vi.fn().mockReturnValue(true);
 const mockAssertExchange = vi.fn().mockResolvedValue(undefined);
-const mockChannel = { assertExchange: mockAssertExchange, publish: mockPublish, close: mockChannelClose };
+const mockChannel = {
+  assertExchange: mockAssertExchange,
+  publish: mockPublish,
+  close: mockChannelClose,
+};
 const mockCreateChannel = vi.fn().mockResolvedValue(mockChannel);
 const mockClient = { createChannel: mockCreateChannel };
 
@@ -223,13 +264,24 @@ describe('slothDelaySender', () => {
     mockCreateChannel.mockResolvedValue(mockChannel);
     mockChannelClose.mockResolvedValue(undefined);
   });
-  afterEach(() => { vi.useRealTimers(); });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it('publishes to the request exchange with correct routing key and headers', async () => {
     const { slothDelaySender } = await import('../sender.js');
-    await slothDelaySender(mockClient as never)({ data: { key: 'test-event' }, delayMinutes: 30, logger: mockLogger, config: testConfig });
+    await slothDelaySender(mockClient as never)({
+      data: { key: 'test-event' },
+      delayMinutes: 30,
+      logger: mockLogger,
+      config: testConfig,
+    });
 
-    expect(mockAssertExchange).toHaveBeenCalledWith('sloth.direct.exchange.request', 'direct', expect.objectContaining({ durable: true }));
+    expect(mockAssertExchange).toHaveBeenCalledWith(
+      'sloth.direct.exchange.request',
+      'direct',
+      expect.objectContaining({ durable: true }),
+    );
     expect(mockPublish).toHaveBeenCalledWith(
       'sloth.direct.exchange.request',
       'delay',
@@ -246,9 +298,17 @@ describe('slothDelaySender', () => {
 
   it('publishes correct delay-until when using delaySeconds', async () => {
     const { slothDelaySender } = await import('../sender.js');
-    await slothDelaySender(mockClient as never)({ data: { key: 'test' }, delaySeconds: 90, logger: mockLogger, config: testConfig });
+    await slothDelaySender(mockClient as never)({
+      data: { key: 'test' },
+      delaySeconds: 90,
+      logger: mockLogger,
+      config: testConfig,
+    });
 
-    const headers = mockPublish.mock.calls[0]?.[3]?.headers as { 'delay-until': number; target: string };
+    const headers = mockPublish.mock.calls[0]?.[3]?.headers as {
+      'delay-until': number;
+      target: string;
+    };
     expect(headers['delay-until']).toBe(FIXED_NOW_SEC + 90);
     expect(headers['target']).toBe('amqp://test-service/test.key');
   });
@@ -256,9 +316,17 @@ describe('slothDelaySender', () => {
   it('publishes correct delay-until when using delayUntil', async () => {
     const { slothDelaySender } = await import('../sender.js');
     const future = new Date(FIXED_NOW_MS + 5 * 60 * 1000);
-    await slothDelaySender(mockClient as never)({ data: { key: 'test' }, delayUntil: future, logger: mockLogger, config: testConfig });
+    await slothDelaySender(mockClient as never)({
+      data: { key: 'test' },
+      delayUntil: future,
+      logger: mockLogger,
+      config: testConfig,
+    });
 
-    const headers = mockPublish.mock.calls[0]?.[3]?.headers as { 'delay-until': number; target: string };
+    const headers = mockPublish.mock.calls[0]?.[3]?.headers as {
+      'delay-until': number;
+      target: string;
+    };
     expect(headers['delay-until']).toBe(Math.ceil(future.getTime() / 1000));
     expect(headers['target']).toBe('amqp://test-service/test.key');
   });
@@ -266,7 +334,12 @@ describe('slothDelaySender', () => {
   it('logs warn and still publishes when delayUntil is in the past', async () => {
     const { slothDelaySender } = await import('../sender.js');
     const past = new Date(FIXED_NOW_MS - 1000);
-    await slothDelaySender(mockClient as never)({ data: { key: 'test' }, delayUntil: past, logger: mockLogger, config: testConfig });
+    await slothDelaySender(mockClient as never)({
+      data: { key: 'test' },
+      delayUntil: past,
+      logger: mockLogger,
+      config: testConfig,
+    });
     expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('past'));
     expect(mockPublish).toHaveBeenCalled();
   });
@@ -275,7 +348,12 @@ describe('slothDelaySender', () => {
     const { slothDelaySender } = await import('../sender.js');
     mockAssertExchange.mockRejectedValueOnce(new Error('exchange error'));
     await expect(
-      slothDelaySender(mockClient as never)({ data: { key: 'test' }, delayMinutes: 5, logger: mockLogger, config: testConfig }),
+      slothDelaySender(mockClient as never)({
+        data: { key: 'test' },
+        delayMinutes: 5,
+        logger: mockLogger,
+        config: testConfig,
+      }),
     ).rejects.toThrow('exchange error');
     expect(mockChannelClose).toHaveBeenCalled();
   });
@@ -283,7 +361,12 @@ describe('slothDelaySender', () => {
   it('logs warn when channel close fails in finally', async () => {
     const { slothDelaySender } = await import('../sender.js');
     mockChannelClose.mockRejectedValueOnce(new Error('close failed'));
-    await slothDelaySender(mockClient as never)({ data: { key: 'test' }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    await slothDelaySender(mockClient as never)({
+      data: { key: 'test' },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+    });
     expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('failed to close'));
   });
 
@@ -292,7 +375,12 @@ describe('slothDelaySender', () => {
     const circular: Record<string, unknown> = {};
     circular['self'] = circular;
     await expect(
-      slothDelaySender(mockClient as never)({ data: circular, delayMinutes: 1, logger: mockLogger, config: testConfig }),
+      slothDelaySender(mockClient as never)({
+        data: circular,
+        delayMinutes: 1,
+        logger: mockLogger,
+        config: testConfig,
+      }),
     ).rejects.toThrow('not JSON-serializable');
     expect(mockCreateChannel).not.toHaveBeenCalled();
   });
@@ -300,7 +388,12 @@ describe('slothDelaySender', () => {
   it('throws without opening a channel when config is invalid', async () => {
     const { slothDelaySender } = await import('../sender.js');
     await expect(
-      slothDelaySender(mockClient as never)({ data: { key: 'test' }, delayMinutes: 1, logger: mockLogger, config: { serviceName: 'bad/name', routingKey: 'k' } }),
+      slothDelaySender(mockClient as never)({
+        data: { key: 'test' },
+        delayMinutes: 1,
+        logger: mockLogger,
+        config: { serviceName: 'bad/name', routingKey: 'k' },
+      }),
     ).rejects.toThrow('serviceName');
     expect(mockCreateChannel).not.toHaveBeenCalled();
   });
@@ -309,7 +402,12 @@ describe('slothDelaySender', () => {
     const { slothDelaySender } = await import('../sender.js');
     mockCreateChannel.mockRejectedValueOnce(new Error('no channel'));
     await expect(
-      slothDelaySender(mockClient as never)({ data: { key: 'test' }, delayMinutes: 1, logger: mockLogger, config: testConfig }),
+      slothDelaySender(mockClient as never)({
+        data: { key: 'test' },
+        delayMinutes: 1,
+        logger: mockLogger,
+        config: testConfig,
+      }),
     ).rejects.toThrow('no channel');
     expect(mockChannelClose).not.toHaveBeenCalled();
   });
@@ -317,20 +415,37 @@ describe('slothDelaySender', () => {
   it('warns when publish returns false (back-pressure)', async () => {
     const { slothDelaySender } = await import('../sender.js');
     mockPublish.mockReturnValueOnce(false);
-    await slothDelaySender(mockClient as never)({ data: { key: 'test' }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    await slothDelaySender(mockClient as never)({
+      data: { key: 'test' },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+    });
     expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('back-pressured'));
   });
 
   it('suppresses debug and info logs when logLevel is error', async () => {
     const { slothDelaySender } = await import('../sender.js');
-    await slothDelaySender(mockClient as never)({ data: { key: 'test' }, delayMinutes: 1, logger: mockLogger, config: testConfig, logLevel: 'error' });
+    await slothDelaySender(mockClient as never)({
+      data: { key: 'test' },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+      logLevel: 'error',
+    });
     expect(mockLogger.debug).not.toHaveBeenCalled();
     expect(mockLogger.info).not.toHaveBeenCalled();
   });
 
   it('uses sanitized logLabel in log output', async () => {
     const { slothDelaySender } = await import('../sender.js');
-    await slothDelaySender(mockClient as never)({ data: { x: 1 }, delayMinutes: 1, logger: mockLogger, config: testConfig, logLabel: 'reminder' });
+    await slothDelaySender(mockClient as never)({
+      data: { x: 1 },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+      logLabel: 'reminder',
+    });
     expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('reminder'));
   });
 });

@@ -34,29 +34,40 @@ export const resolveDelayUnixSeconds = (
 ): { delayUntilUnix: number; delayDesc: string; pastDateWarning?: string } => {
   const { delayUntil, delaySeconds, delayMinutes } = params;
   const setCount = [delayUntil, delaySeconds, delayMinutes].filter((v) => v !== undefined).length;
-  if (setCount !== 1) throw new Error('exactly one of delayMinutes, delaySeconds, or delayUntil must be provided');
+  if (setCount !== 1)
+    throw new Error('exactly one of delayMinutes, delaySeconds, or delayUntil must be provided');
   const nowMs = Date.now();
 
   if (delayUntil !== undefined) {
     const ms = delayUntil.getTime();
     if (!Number.isFinite(ms)) throw new Error('delayUntil is an invalid Date');
     const delayUntilUnix = Math.ceil(ms / 1000);
-    const pastDateWarning = ms <= nowMs ? `delayUntil ${delayUntil.toISOString()} is in the past — Sloth will deliver immediately` : undefined;
-    if (delayUntilUnix - Math.floor(nowMs / 1000) > MAX_DELAY_SECONDS) throw new Error('delayUntil exceeds maximum allowed delay of 100 years');
-    return { delayUntilUnix, delayDesc: `until=${delayUntil.toISOString()}`, pastDateWarning };
+    if (delayUntilUnix - Math.floor(nowMs / 1000) > MAX_DELAY_SECONDS)
+      throw new Error('delayUntil exceeds maximum allowed delay of 100 years');
+    const base = { delayUntilUnix, delayDesc: `until=${delayUntil.toISOString()}` };
+    return ms <= nowMs
+      ? {
+          ...base,
+          pastDateWarning: `delayUntil ${delayUntil.toISOString()} is in the past — Sloth will deliver immediately`,
+        }
+      : base;
   }
 
   if (delaySeconds !== undefined) {
-    if (!Number.isFinite(delaySeconds) || delaySeconds <= 0) throw new Error('delaySeconds must be a positive finite number');
-    if (delaySeconds > MAX_DELAY_SECONDS) throw new Error('delaySeconds exceeds maximum allowed delay of 100 years');
+    if (!Number.isFinite(delaySeconds) || delaySeconds <= 0)
+      throw new Error('delaySeconds must be a positive finite number');
+    if (delaySeconds > MAX_DELAY_SECONDS)
+      throw new Error('delaySeconds exceeds maximum allowed delay of 100 years');
     return {
       delayUntilUnix: Math.floor((nowMs + delaySeconds * 1000) / 1000),
       delayDesc: `delay=${String(delaySeconds)}s`,
     };
   }
 
-  if (!Number.isFinite(delayMinutes) || delayMinutes <= 0) throw new Error('delayMinutes must be a positive finite number');
-  if (delayMinutes * 60 > MAX_DELAY_SECONDS) throw new Error('delayMinutes exceeds maximum allowed delay of 100 years');
+  if (!Number.isFinite(delayMinutes) || delayMinutes <= 0)
+    throw new Error('delayMinutes must be a positive finite number');
+  if (delayMinutes * 60 > MAX_DELAY_SECONDS)
+    throw new Error('delayMinutes exceeds maximum allowed delay of 100 years');
   return {
     delayUntilUnix: Math.floor((nowMs + delayMinutes * 60 * 1000) / 1000),
     delayDesc: `delay=${String(delayMinutes)}min`,
@@ -84,7 +95,9 @@ export const slothDelaySender =
     if (pastDateWarning !== undefined) logger.warn(`sloth: ${pastDateWarning}`);
     const body = serializeData(data);
 
-    logger.debug(`sloth: scheduling ${label} for ${config.serviceName}/${config.routingKey} (${delayDesc})`);
+    logger.debug(
+      `sloth: scheduling ${label} for ${config.serviceName}/${config.routingKey} (${delayDesc})`,
+    );
 
     let chan: Channel | null = null;
     const startTime = Date.now();
@@ -103,9 +116,13 @@ export const slothDelaySender =
       });
       if (!ok) logger.warn('sloth: publish back-pressured (channel write buffer full)');
 
-      logger.info(`sloth: scheduled ${label} (${delayDesc}, took=${String(Date.now() - startTime)}ms)`);
+      logger.info(
+        `sloth: scheduled ${label} (${delayDesc}, took=${String(Date.now() - startTime)}ms)`,
+      );
     } catch (error) {
-      logger.error(`sloth: failed to schedule ${label} after ${String(Date.now() - startTime)}ms: ${errMessage(error)}`);
+      logger.error(
+        `sloth: failed to schedule ${label} after ${String(Date.now() - startTime)}ms: ${errMessage(error)}`,
+      );
       throw error;
     } finally {
       if (chan) {
