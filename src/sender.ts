@@ -16,8 +16,8 @@ const isControlChar = (c: string): boolean => { const n = c.codePointAt(0); retu
 export const sanitizeLabel = (raw: string): string =>
   Array.from(segmenter.segment(raw), (s) => s.segment)
     .filter((c) => !isControlChar(c))
-    .join('')
-    .slice(0, 200);
+    .slice(0, 200)
+    .join('');
 
 /**
  * Resolves whichever delay variant is set into an absolute unix timestamp (seconds)
@@ -30,7 +30,8 @@ export const resolveDelayUnixSeconds = (
   const { delayUntil, delaySeconds, delayMinutes } = params;
   const setCount = [delayUntil, delaySeconds, delayMinutes].filter((v) => v !== undefined).length;
   if (setCount !== 1) throw new Error('exactly one of delayMinutes, delaySeconds, or delayUntil must be provided');
-  const nowSec = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
+  const nowSec = Math.floor(nowMs / 1000);
 
   if (delayUntil !== undefined) {
     const ms = delayUntil.getTime();
@@ -45,7 +46,7 @@ export const resolveDelayUnixSeconds = (
     if (!Number.isFinite(delaySeconds) || delaySeconds <= 0) throw new Error('delaySeconds must be a positive finite number');
     if (delaySeconds > MAX_DELAY_SECONDS) throw new Error('delaySeconds exceeds maximum allowed delay of 100 years');
     return {
-      delayUntilUnix: Math.floor((Date.now() + delaySeconds * 1000) / 1000),
+      delayUntilUnix: Math.floor((nowMs + delaySeconds * 1000) / 1000),
       delayDesc: `delay=${String(delaySeconds)}s`,
     };
   }
@@ -53,7 +54,7 @@ export const resolveDelayUnixSeconds = (
   if (!Number.isFinite(delayMinutes) || delayMinutes <= 0) throw new Error('delayMinutes must be a positive finite number');
   if (delayMinutes * 60 > MAX_DELAY_SECONDS) throw new Error('delayMinutes exceeds maximum allowed delay of 100 years');
   return {
-    delayUntilUnix: Math.floor((Date.now() + delayMinutes * 60 * 1000) / 1000),
+    delayUntilUnix: Math.floor((nowMs + delayMinutes * 60 * 1000) / 1000),
     delayDesc: `delay=${String(delayMinutes)}min`,
   };
 };
