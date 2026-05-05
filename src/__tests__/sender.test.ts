@@ -116,9 +116,23 @@ describe('resolveDelayUnixSeconds', () => {
     expect(() => resolveDelayUnixSeconds({ delayUntil: new Date('not-a-date') })).toThrow('delayUntil is an invalid Date');
   });
 
-  it('throws if delayUntil is in the past', async () => {
+  it('returns pastDateWarning when delayUntil is in the past', async () => {
     const { resolveDelayUnixSeconds } = await import('../sender.js');
-    expect(() => resolveDelayUnixSeconds({ delayUntil: new Date(FIXED_NOW_MS - 1000) })).toThrow('delayUntil must be in the future');
+    const { pastDateWarning } = resolveDelayUnixSeconds({ delayUntil: new Date(FIXED_NOW_MS - 1000) });
+    expect(pastDateWarning).toMatch(/past/);
+  });
+
+  it('returns no pastDateWarning when delayUntil is in the future', async () => {
+    const { resolveDelayUnixSeconds } = await import('../sender.js');
+    const { pastDateWarning } = resolveDelayUnixSeconds({ delayUntil: new Date(FIXED_NOW_MS + 60_000) });
+    expect(pastDateWarning).toBeUndefined();
+  });
+
+  it('rounds delayUntil up to next second (Math.ceil) preserving sub-second precision', async () => {
+    const { resolveDelayUnixSeconds } = await import('../sender.js');
+    const dateWithMs = new Date(FIXED_NOW_MS + 500); // 500ms into next second
+    const { delayUntilUnix } = resolveDelayUnixSeconds({ delayUntil: dateWithMs });
+    expect(delayUntilUnix).toBe(Math.ceil((FIXED_NOW_MS + 500) / 1000));
   });
 
   it('throws if delayUntil exceeds 100 years from now', async () => {
@@ -129,14 +143,29 @@ describe('resolveDelayUnixSeconds', () => {
 });
 
 describe('sanitizeLabel', () => {
-  it('strips newlines', async () => {
+  it('strips ASCII newlines (U+000A)', async () => {
     const { sanitizeLabel } = await import('../sender.js');
     expect(sanitizeLabel('ok\nlabel')).toBe('oklabel');
   });
 
-  it('strips null bytes', async () => {
+  it('strips null bytes (U+0000)', async () => {
     const { sanitizeLabel } = await import('../sender.js');
     expect(sanitizeLabel('ok\x00label')).toBe('oklabel');
+  });
+
+  it('strips NEL (U+0085)', async () => {
+    const { sanitizeLabel } = await import('../sender.js');
+    expect(sanitizeLabel('oklabel')).toBe('oklabel');
+  });
+
+  it('strips Unicode line separator (U+2028)', async () => {
+    const { sanitizeLabel } = await import('../sender.js');
+    expect(sanitizeLabel('ok label')).toBe('oklabel');
+  });
+
+  it('strips Unicode paragraph separator (U+2029)', async () => {
+    const { sanitizeLabel } = await import('../sender.js');
+    expect(sanitizeLabel('ok label')).toBe('oklabel');
   });
 
   it('truncates to 200 grapheme clusters, not code units', async () => {
@@ -219,7 +248,7 @@ describe('slothDelaySender', () => {
     const { slothDelaySender } = await import('../sender.js');
     await slothDelaySender(mockClient as never)({ data: { key: 'test' }, delaySeconds: 90, logger: mockLogger, config: testConfig });
 
-    const headers = mockPublish.mock.calls[0]?.[3]?.headers as Record<string, number>;
+    const headers = mockPublish.mock.calls[0]?.[3]?.headers as { 'delay-until': number; target: string };
     expect(headers['delay-until']).toBe(FIXED_NOW_SEC + 90);
     expect(headers['target']).toBe('amqp://test-service/test.key');
   });
@@ -229,9 +258,17 @@ describe('slothDelaySender', () => {
     const future = new Date(FIXED_NOW_MS + 5 * 60 * 1000);
     await slothDelaySender(mockClient as never)({ data: { key: 'test' }, delayUntil: future, logger: mockLogger, config: testConfig });
 
-    const headers = mockPublish.mock.calls[0]?.[3]?.headers as Record<string, number>;
-    expect(headers['delay-until']).toBe(Math.floor(future.getTime() / 1000));
+    const headers = mockPublish.mock.calls[0]?.[3]?.headers as { 'delay-until': number; target: string };
+    expect(headers['delay-until']).toBe(Math.ceil(future.getTime() / 1000));
     expect(headers['target']).toBe('amqp://test-service/test.key');
+  });
+
+  it('logs warn and still publishes when delayUntil is in the past', async () => {
+    const { slothDelaySender } = await import('../sender.js');
+    const past = new Date(FIXED_NOW_MS - 1000);
+    await slothDelaySender(mockClient as never)({ data: { key: 'test' }, delayUntil: past, logger: mockLogger, config: testConfig });
+    expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('past'));
+    expect(mockPublish).toHaveBeenCalled();
   });
 
   it('closes channel even when publish throws', async () => {

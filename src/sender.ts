@@ -8,38 +8,42 @@ import { assertSafeSlothConfig, getSlothTarget, slothRequestExchangeName } from 
 export const MAX_DELAY_SECONDS = 100 * 365 * 24 * 3600;
 
 /**
- * Strips ASCII control characters (U+0000–U+001F, U+007F) and truncates to 200 chars
- * so caller-supplied labels cannot inject newlines or escape sequences into log output.
+ * Strips control and newline-like characters and truncates to 200 grapheme clusters
+ * so caller-supplied labels cannot inject line breaks or escape sequences into log output.
+ * Removed: ASCII controls (U+0000–U+001F), DEL (U+007F), NEL (U+0085),
+ *           Unicode line separator (U+2028), paragraph separator (U+2029).
  */
 const segmenter = new Intl.Segmenter();
-const isControlChar = (c: string): boolean => { const n = c.codePointAt(0); return n !== undefined && (n <= 0x1f || n === 0x7f); };
+const isUnsafeChar = (c: string): boolean => {
+  const n = c.codePointAt(0);
+  return n !== undefined && (n <= 0x1f || n === 0x7f || n === 0x85 || n === 0x2028 || n === 0x2029);
+};
 export const sanitizeLabel = (raw: string): string =>
   Array.from(segmenter.segment(raw), (s) => s.segment)
-    .filter((c) => !isControlChar(c))
+    .filter((c) => !isUnsafeChar(c))
     .slice(0, 200)
     .join('');
 
 /**
  * Resolves whichever delay variant is set into an absolute unix timestamp (seconds)
  * and a human-readable description for log lines.
- * Throws on invalid, past, or out-of-range values.
+ * Throws on invalid input or out-of-range values. Past delayUntil dates return a pastDateWarning instead of throwing.
  */
 export const resolveDelayUnixSeconds = (
   params: DelaySpec,
-): { delayUntilUnix: number; delayDesc: string } => {
+): { delayUntilUnix: number; delayDesc: string; pastDateWarning?: string } => {
   const { delayUntil, delaySeconds, delayMinutes } = params;
   const setCount = [delayUntil, delaySeconds, delayMinutes].filter((v) => v !== undefined).length;
   if (setCount !== 1) throw new Error('exactly one of delayMinutes, delaySeconds, or delayUntil must be provided');
   const nowMs = Date.now();
-  const nowSec = Math.floor(nowMs / 1000);
 
   if (delayUntil !== undefined) {
     const ms = delayUntil.getTime();
     if (!Number.isFinite(ms)) throw new Error('delayUntil is an invalid Date');
-    const delayUntilUnix = Math.floor(ms / 1000);
-    if (delayUntilUnix <= nowSec) throw new Error('delayUntil must be in the future');
-    if (delayUntilUnix - nowSec > MAX_DELAY_SECONDS) throw new Error('delayUntil exceeds maximum allowed delay of 100 years');
-    return { delayUntilUnix, delayDesc: `until=${delayUntil.toISOString()}` };
+    const delayUntilUnix = Math.ceil(ms / 1000);
+    const pastDateWarning = ms <= nowMs ? `delayUntil ${delayUntil.toISOString()} is in the past — Sloth will deliver immediately` : undefined;
+    if (delayUntilUnix - Math.floor(nowMs / 1000) > MAX_DELAY_SECONDS) throw new Error('delayUntil exceeds maximum allowed delay of 100 years');
+    return { delayUntilUnix, delayDesc: `until=${delayUntil.toISOString()}`, pastDateWarning };
   }
 
   if (delaySeconds !== undefined) {
@@ -76,7 +80,8 @@ export const slothDelaySender =
     assertSafeSlothConfig(config);
 
     const label = logLabel !== undefined ? sanitizeLabel(logLabel) : 'message';
-    const { delayUntilUnix, delayDesc } = resolveDelayUnixSeconds(params);
+    const { delayUntilUnix, delayDesc, pastDateWarning } = resolveDelayUnixSeconds(params);
+    if (pastDateWarning !== undefined) logger.warn(`sloth: ${pastDateWarning}`);
     const body = serializeData(data);
 
     logger.debug(`sloth: scheduling ${label} for ${config.serviceName}/${config.routingKey} (${delayDesc})`);
