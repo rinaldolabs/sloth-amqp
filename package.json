@@ -3,18 +3,18 @@
   "version": "0.1.0",
   "description": "Node.js TypeScript client for the Sloth delayed-message AMQP service",
   "type": "module",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
   "files": [
     "dist"
   ],
   "engines": {
-    "node": "^24.15.0",
-    "npm": "^11.4.0"
+    "node": "^24.15.0"
   },
   "publishConfig": {
     "access": "public",
@@ -61,10 +61,14 @@
     "delayed-messages",
     "typescript"
   ],
+  "author": "Emil Rinaldo",
   "homepage": "https://github.com/rinaldolabs/sloth-amqp",
   "repository": {
     "type": "git",
     "url": "https://github.com/rinaldolabs/sloth-amqp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rinaldolabs/sloth-amqp/issues"
   },
   "license": "MIT",
   "private": false

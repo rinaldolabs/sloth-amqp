@@ -1,5 +1,9 @@
 # @rinaldolabs/sloth-amqp
 
+[![CI](https://github.com/rinaldolabs/sloth-amqp/actions/workflows/ci.yml/badge.svg)](https://github.com/rinaldolabs/sloth-amqp/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@rinaldolabs/sloth-amqp.svg)](https://www.npmjs.com/package/@rinaldolabs/sloth-amqp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
 Node.js TypeScript client for [Sloth](https://gitlab.com/unboundsoftware/sloth) — a delayed-message delivery service over AMQP/RabbitMQ.
 
 This package is the TypeScript counterpart to `gitlab.com/unboundsoftware/sloth/client-amqp` and is wire-compatible with Sloth `amqp:0.0.10`. It complements [@opzkit/nodeamqp](https://www.npmjs.com/package/@opzkit/nodeamqp), which handles event streams and request/response patterns.
@@ -122,6 +126,18 @@ Headers sent with each delayed message:
 | ------------- | ---------------------- | ---------------------------------------------------------- |
 | `delay-until` | `int64` (unix seconds) | When to deliver the message                                |
 | `target`      | `string` (AMQP URL)    | Response destination: `amqp://<serviceName>/<routingKey>` |
+
+## Compared to the Go client
+
+This package implements the same wire protocol as [`gitlab.com/unboundsoftware/sloth/client-amqp`](https://gitlab.com/unboundsoftware/sloth/client-amqp) — they can interoperate with the same Sloth server. The TypeScript API intentionally diverges from the Go API where idiomatic TypeScript suggests a different shape:
+
+- **Per-call config instead of a type registry.** The Go client uses `reflect.TypeOf` to map request structs to routing keys at registration time. We require the caller to pass `{ serviceName, routingKey }` per send. TypeScript has no runtime type reflection for arbitrary types, and explicit config is type-safer than a runtime registry.
+- **Explicit listener handle.** `setupDelayedMessageListener` returns `SlothListenerHandle { consumerTag, close() }`. The Go client returns a `goamqp.Setup` function. The handle makes shutdown order explicit and prevents leaked consumers.
+- **Caller-owned connection.** `slothConnect` returns a `ChannelModel` that the caller owns; `slothDelaySender(client)` is a factory that does not take ownership. The Go client's `New()` opens and closes its own connection. The split lets one connection serve multiple senders/listeners and makes tests trivial.
+- **Strict ack model.** The listener uses `noAck: false` and explicitly `ack`s on success or `nack(requeue=false)` on handler failure, relying on a broker-configured DLX for retries. The Go client uses goamqp's defaults.
+- **Injected logger.** All logging goes through an injected `SlothLogger` (`NoOpLogger` by default). Nothing is written to `console`.
+
+These are deliberate API choices, not accidents. The wire protocol — exchange names, routing keys, `delay-until` and `target` headers — is identical to the Go client.
 
 ## Related
 
