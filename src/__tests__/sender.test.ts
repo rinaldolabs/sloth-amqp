@@ -33,6 +33,11 @@ describe('resolveDelayUnixSeconds', () => {
     expect(delayDesc).toContain('until=');
   });
 
+  it('throws when no delay field is provided', async () => {
+    const { resolveDelayUnixSeconds } = await import('../sender.js');
+    expect(() => resolveDelayUnixSeconds({} as never)).toThrow('exactly one');
+  });
+
   it('throws when both delayMinutes and delaySeconds are provided', async () => {
     const { resolveDelayUnixSeconds } = await import('../sender.js');
     expect(() => resolveDelayUnixSeconds({ delayMinutes: 5, delaySeconds: 30 } as never)).toThrow('exactly one');
