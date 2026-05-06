@@ -11,10 +11,31 @@ type SendDelayMessageBase<TData = unknown> = {
   data: TData;
   logger: SlothLogger;
   config: SlothConfig;
-  // Optional human-readable label used in log lines. Falls back to 'message'.
+  /** Optional human-readable label used in log lines. Falls back to 'message'. */
   logLabel?: string;
-  // Optional minimum level for this library's log calls. Caller's logger is otherwise untouched.
+  /** Optional minimum level for this library's log calls. Caller's logger is otherwise untouched. */
   logLevel?: SlothLogLevel;
+  /**
+   * Override the auto-generated message ID. By default, every send gets a
+   * fresh `crypto.randomUUID()` published as AMQP `messageId`. Provide your
+   * own when you need deterministic IDs for idempotency stores.
+   */
+  messageId?: string;
+  /**
+   * Optional correlation ID for tracking related messages across services.
+   * Forwarded as the AMQP `correlationId` property; consumers can read it
+   * via `message.properties.correlationId`.
+   */
+  correlationId?: string;
+  /**
+   * Extra AMQP headers merged onto the published message. Use this to forward
+   * W3C trace context (`traceparent`, `tracestate`) so distributed traces
+   * survive the Sloth hop.
+   *
+   * The headers `delay-until` and `target` are reserved by the Sloth wire
+   * protocol — passing them here throws before any AMQP work happens.
+   */
+  headers?: Record<string, string | number | boolean>;
 };
 
 export type SendDelayMessageParams<TData = unknown> = SendDelayMessageBase<TData> & DelaySpec;
