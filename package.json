@@ -47,8 +47,6 @@
     "eslint": "10.3.0",
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-security": "4.0.0",
-    "husky": "9.1.7",
-    "lint-staged": "17.0.2",
     "lockfile-lint": "5.0.0",
     "prettier": "3.8.3",
     "publint": "^0.3.19",
@@ -73,7 +71,6 @@
     "size": "size-limit",
     "size:why": "size-limit --why",
     "sbom": "cyclonedx-npm --output-file sbom.json",
-    "prepare": "husky",
     "prepublishOnly": "npm run lint && npm run type-check && npm run build && npm run lint:packaging && npm run size && npm run coverage"
   },
   "keywords": [
