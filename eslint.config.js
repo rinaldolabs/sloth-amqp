@@ -42,6 +42,7 @@ export default tseslint.config(
       'vitest.integration.config.ts',
       'tsup.config.ts',
       'eslint.config.js',
+      '.size-limit.cjs',
     ],
   },
 );

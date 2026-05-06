@@ -81,6 +81,24 @@ jobs:
         if: always()
         uses: davelosert/vitest-coverage-report-action@v2
 
+  packaging:
+    name: Packaging (publint + attw + size-limit)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build
+      - name: Validate published shape (publint + attw)
+        run: npm run lint:packaging
+      - name: Enforce size budget
+        run: npm run size
+
   security:
     name: npm audit
     runs-on: ubuntu-24.04
@@ -106,7 +124,7 @@ jobs:
       - uses: pre-commit/action@v3.0.1
 
   ci-gate:
-    needs: [lint, type-check, build, coverage, security, pre-commit]
+    needs: [lint, type-check, build, packaging, coverage, security, pre-commit]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
