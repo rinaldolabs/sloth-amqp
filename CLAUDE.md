@@ -35,9 +35,10 @@ This package implements a single messaging pattern: **delayed-message request/re
 
 ### Modules (all under `src/`)
 
-- **`connection.ts`** — `slothConnect(url, ...setups)` opens an `amqplib.ChannelModel`, runs optional `SlothSetup` functions, returns the model. `slothClose` closes it. Caller owns the connection.
+- **`connection.ts`** — `slothConnect(url, ...setups)` opens an `amqplib.ChannelModel`, runs optional `SlothSetup` functions, returns the model. Optional first arg `SlothConnectOptions { signal?, timeoutMs? }` bounds the connect+setup phase via `AbortSignal`. `slothClose` closes it. Caller owns the connection.
+- **`abort.ts`** — `combineAbort` composes `signal` + `timeoutMs` via `AbortSignal.any`. `raceWithAbort` races a promise against the signal with loser-cleanup support (closes resources that resolve after abort to avoid leaks). `safeClose` helper that calls `.close()` and swallows errors. Used by both `connection.ts` and `listener.ts`.
 - **`sender.ts`** — `createDelaySender(client)` returns a `DelaySender` object with an async `send<TData>(params)` method. Publishes to `sloth.direct.exchange.request` with routing key `delay`, headers `delay-until` (unix seconds) and `target` (`amqp://<service>/<key>`), body `JSON.stringify(data)`. Caches a single `ConfirmChannel` for the factory's lifetime, asserts the exchange once on first use, and re-creates the channel transparently on broker `error`/`close`. `send` resolves only after the broker confirms the publish; a broker nack rejects the promise.
-- **`listener.ts`** — `setupDelayedMessageListener(opts)` declares the response queue, binds it to `sloth.headers.exchange.response` with the headers binding `service: <serviceName>`, registers the consumer. Returns a `SlothListenerHandle { consumerTag, close() }`. `noAck: false`; handler success → `ack`, handler failure → `nack(requeue=false)` so the broker DLX takes over.
+- **`listener.ts`** — `setupDelayedMessageListener(opts)` declares the response queue, binds it to `sloth.headers.exchange.response` with the headers binding `service: <serviceName>`, registers the consumer. Returns a `SlothListenerHandle { consumerTag, close() }`. `noAck: false`; handler success → `ack`, handler failure → `nack(requeue=false)` so the broker DLX takes over. Accepts optional `signal` / `timeoutMs` to bound the setup phase.
 - **`logger.ts`** — `SlothLogger` interface (`info/warn/error/debug` required, `child` optional). `NoOpLogger` is the default; `consoleLogger` is a `console`-backed shim for scripts/demos. `withLogLevel(logger, level)` filters by minimum level and only exposes `child` when the wrapped logger has it.
 - **`errors.ts`** — `errMessage(unknown)` extracts a safe string from any caught value. Used everywhere to avoid leaking stack traces.
 - **`types.ts`** — public param shapes (`SendDelayMessageParams<TData>`, `SlothListenerOptions`, `SlothListenerHandle`, `SlothSetup`).
@@ -99,7 +100,7 @@ These constants are not configurable — they're part of the wire contract with 
 
 Anything exported from `src/index.ts` is part of the published API. Treat changes there as breaking until the package reaches 1.0:
 
-- `slothConnect`, `slothClose`
+- `slothConnect`, `slothClose` — `slothConnect` accepts optional `SlothConnectOptions { signal?, timeoutMs? }`
 - `createDelaySender` — returns a `DelaySender { send<TData>(params): Promise<void> }`
 - `setupDelayedMessageListener` — returns `SlothListenerHandle { consumerTag, close() }`
 - `MAX_DELAY_SECONDS`, `resolveDelaySeconds`, `sanitizeLabel`, `serializeData` — pure helpers exposed for callers that want to validate input ahead of `send`

@@ -98,6 +98,61 @@ process.on('SIGTERM', () => void handle.close());
 process.on('SIGINT', () => void handle.close());
 ```
 
+### Cancellation and timeouts
+
+Both `slothConnect` and `setupDelayedMessageListener` accept an optional `signal` (`AbortSignal`) and `timeoutMs` to bound the network setup phase. Internally they compose via `AbortSignal.any` and reject with `signal.reason` propagated **verbatim**, matching WHATWG `fetch`/undici semantics — the package never wraps the reason.
+
+The reason depends on what fired:
+
+| Source | Resulting `signal.reason` |
+| ------ | ------------------------- |
+| `AbortSignal.timeout(ms)` | `DOMException` with `name === 'TimeoutError'` |
+| `controller.abort()` (no argument) | `DOMException` with `name === 'AbortError'` |
+| `controller.abort(reason)` | `reason` as-is — `Error`, string, or any value the caller passes |
+
+```ts
+import { slothConnect, setupDelayedMessageListener } from '@rinaldolabs/sloth-amqp';
+
+// Bound by a 10-second timeout — first arg after `url` may be an options bag.
+const client = await slothConnect(amqpUrl, { timeoutMs: 10_000 });
+
+// Or a caller-supplied AbortController shared across operations.
+const ac = new AbortController();
+process.on('SIGTERM', () => ac.abort());
+const client = await slothConnect(amqpUrl, { signal: ac.signal });
+
+// Both — first source to fire wins, and signal.reason carries that source's reason.
+const client = await slothConnect(amqpUrl, { signal: ac.signal, timeoutMs: 30_000 });
+
+// Listener accepts the same options inline.
+const handle = await setupDelayedMessageListener({
+  amqpUrl,
+  config,
+  onMessage,
+  signal: ac.signal,
+  timeoutMs: 15_000,
+});
+
+// Catching abort/timeout errors. `err` is `unknown` in strict TS, so narrow
+// before reading `.name`. Custom abort reasons may not be DOMException-shaped.
+try {
+  await slothConnect(amqpUrl, { timeoutMs: 100 });
+} catch (err) {
+  if (err instanceof DOMException && err.name === 'TimeoutError') {
+    // bounded by timeoutMs
+  } else if (err instanceof DOMException && err.name === 'AbortError') {
+    // caller invoked controller.abort() with no argument
+  } else {
+    // either a custom abort reason from controller.abort(reason),
+    // or a real network/protocol error from amqplib
+  }
+}
+```
+
+The cancellation window covers connect + handshake + setup. After the operation resolves, the signal stops mattering — manage lifetime via `slothClose(client)` or `handle.close()`.
+
+> Existing `slothConnect(url, ...setups)` callers keep working unchanged. The options bag is optional and detected by shape (object vs function), so adding it doesn't break the variadic setup-functions form. Passing `undefined` in the options slot — e.g. `slothConnect(url, maybeOpts, setupFn)` where `maybeOpts` is `undefined` — also works; the discriminator treats it as "no options" and the trailing arguments are still picked up as setup functions.
+
 ### Logger compatibility
 
 Any object satisfying `SlothLogger` works. `child()` is **optional** — loggers that don't support contextual children (`console`, `@nestjs/common` Logger, electron-log, etc.) can omit it. The package never relies on `child()` internally; `withLogLevel` only proxies it when the wrapped logger has it.

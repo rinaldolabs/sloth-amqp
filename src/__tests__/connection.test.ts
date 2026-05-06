@@ -43,6 +43,130 @@ describe('slothConnect', () => {
     mockConnect.mockRejectedValueOnce(new Error('refused'));
     await expect(slothConnect('amqp://bad')).rejects.toThrow('refused');
   });
+
+  it('throws immediately when caller-supplied signal is already aborted', async () => {
+    const { slothConnect } = await import('../connection.js');
+    const ac = new AbortController();
+    ac.abort(new Error('pre-aborted'));
+    await expect(
+      slothConnect('amqp://localhost', { signal: ac.signal }),
+    ).rejects.toThrow('pre-aborted');
+    // amqp.connect should never have been called.
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
+
+  it('rejects with TimeoutError when timeoutMs elapses before connect resolves', async () => {
+    vi.useFakeTimers();
+    try {
+      const { slothConnect } = await import('../connection.js');
+      mockConnect.mockReturnValueOnce(new Promise(() => {})); // never resolves
+      const promise = slothConnect('amqp://hung', { timeoutMs: 50 });
+      promise.catch(() => undefined); // attach handler before advancing
+      await vi.advanceTimersByTimeAsync(51);
+      await expect(promise).rejects.toMatchObject({ name: 'TimeoutError' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('closes the connection if it resolves after the signal aborted (no leak)', async () => {
+    const { slothConnect } = await import('../connection.js');
+    const ac = new AbortController();
+    let resolveConnect!: (c: typeof mockClient) => void;
+    mockConnect.mockReturnValueOnce(
+      new Promise<typeof mockClient>((resolve) => {
+        resolveConnect = resolve;
+      }),
+    );
+
+    setTimeout(() => {
+      ac.abort(new Error('cancelled'));
+    }, 5);
+    const promise = slothConnect('amqp://localhost', { signal: ac.signal });
+    await expect(promise).rejects.toThrow('cancelled');
+
+    // Loser resolves *after* the race lost — the helper must close it.
+    resolveConnect(mockClient);
+    await new Promise((r) => setImmediate(r));
+    expect(mockClose).toHaveBeenCalled();
+  });
+
+  it('closes the client if a setup throws after signal aborts', async () => {
+    const { slothConnect } = await import('../connection.js');
+    const ac = new AbortController();
+    const slowSetup = vi.fn().mockReturnValue(new Promise(() => {})); // never settles
+    setTimeout(() => {
+      ac.abort(new Error('mid-setup-abort'));
+    }, 5);
+    await expect(
+      slothConnect('amqp://localhost', { signal: ac.signal }, slowSetup),
+    ).rejects.toThrow('mid-setup-abort');
+    expect(mockClose).toHaveBeenCalled();
+  });
+
+  it('accepts options bag followed by setup functions', async () => {
+    const { slothConnect } = await import('../connection.js');
+    const setup = vi.fn().mockResolvedValue(undefined);
+    const client = await slothConnect('amqp://localhost', { timeoutMs: 5_000 }, setup);
+    expect(setup).toHaveBeenCalledWith(client);
+  });
+
+  it('treats first arg as setup when not an options object (backward compat)', async () => {
+    const { slothConnect } = await import('../connection.js');
+    const setup = vi.fn().mockResolvedValue(undefined);
+    await slothConnect('amqp://localhost', setup);
+    expect(setup).toHaveBeenCalledWith(mockClient);
+  });
+
+  it('treats undefined in the options slot as no-options and still runs trailing setups', async () => {
+    // Regression: a caller writing `slothConnect(url, maybeOpts, setupFn)` with
+    // `maybeOpts` being an optional variable that happens to be `undefined`
+    // used to silently drop the trailing setup functions.
+    const { slothConnect } = await import('../connection.js');
+    const setup1 = vi.fn().mockResolvedValue(undefined);
+    const setup2 = vi.fn().mockResolvedValue(undefined);
+    const maybeOpts = undefined;
+    const client = await slothConnect(
+      'amqp://localhost',
+      maybeOpts as unknown as never,
+      setup1,
+      setup2,
+    );
+    expect(setup1).toHaveBeenCalledWith(client);
+    expect(setup2).toHaveBeenCalledWith(client);
+  });
+
+  it('also tolerates undefined interleaved with setup functions', async () => {
+    const { slothConnect } = await import('../connection.js');
+    const setup = vi.fn().mockResolvedValue(undefined);
+    await slothConnect('amqp://localhost', setup, undefined as unknown as never);
+    expect(setup).toHaveBeenCalledTimes(1);
+  });
+
+  it('swallows errors from the loser-cleanup close() call', async () => {
+    const { slothConnect } = await import('../connection.js');
+    const ac = new AbortController();
+    let resolveConnect!: (c: typeof mockClient) => void;
+    mockConnect.mockReturnValueOnce(
+      new Promise<typeof mockClient>((resolve) => {
+        resolveConnect = resolve;
+      }),
+    );
+    // close() rejects — the .catch in onLoserSettle must swallow it.
+    mockClose.mockRejectedValueOnce(new Error('close-failed'));
+
+    setTimeout(() => {
+      ac.abort(new Error('cancelled'));
+    }, 5);
+    const promise = slothConnect('amqp://localhost', { signal: ac.signal });
+    await expect(promise).rejects.toThrow('cancelled');
+
+    resolveConnect(mockClient);
+    // Wait long enough for the .catch chain to run; if it didn't swallow, an
+    // unhandled rejection would fire and vitest would flag it.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(mockClose).toHaveBeenCalled();
+  });
 });
 
 describe('slothClose', () => {

@@ -291,6 +291,109 @@ describe('setupDelayedMessageListener', () => {
     expect(mockLogger.info).not.toHaveBeenCalled();
     await handle.close();
   });
+
+  it('throws immediately when caller-supplied signal is already aborted', async () => {
+    const setupFn = await setup();
+    const ac = new AbortController();
+    ac.abort(new Error('pre-aborted'));
+    await expect(
+      setupFn({
+        amqpUrl: 'amqp://localhost',
+        config: testConfig,
+        onMessage: vi.fn(),
+        logger: mockLogger,
+        signal: ac.signal,
+      }),
+    ).rejects.toThrow('pre-aborted');
+    // No connect should have been attempted.
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
+
+  it('rejects with TimeoutError when timeoutMs elapses', async () => {
+    vi.useFakeTimers();
+    try {
+      const setupFn = await setup();
+      mockConnect.mockReturnValueOnce(new Promise(() => {})); // hung
+      const promise = setupFn({
+        amqpUrl: 'amqp://hung',
+        config: testConfig,
+        onMessage: vi.fn(),
+        logger: mockLogger,
+        timeoutMs: 50,
+      });
+      promise.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(51);
+      await expect(promise).rejects.toMatchObject({ name: 'TimeoutError' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects invalid timeoutMs before any I/O', async () => {
+    const setupFn = await setup();
+    await expect(
+      setupFn({
+        amqpUrl: 'amqp://localhost',
+        config: testConfig,
+        onMessage: vi.fn(),
+        logger: mockLogger,
+        timeoutMs: -1,
+      }),
+    ).rejects.toThrow('timeoutMs must be a positive finite number');
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
+
+  it('closes the connection if it resolves after abort (no leak)', async () => {
+    const setupFn = await setup();
+    const ac = new AbortController();
+    let resolveConnect!: (c: typeof mockConnection) => void;
+    mockConnect.mockReturnValueOnce(
+      new Promise<typeof mockConnection>((resolve) => {
+        resolveConnect = resolve;
+      }),
+    );
+    setTimeout(() => {
+      ac.abort(new Error('cancelled'));
+    }, 5);
+    const promise = setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+      signal: ac.signal,
+    });
+    await expect(promise).rejects.toThrow('cancelled');
+
+    resolveConnect(mockConnection);
+    await new Promise((r) => setImmediate(r));
+    expect(mockConnectionClose).toHaveBeenCalled();
+  });
+
+  it('closes the channel if createChannel resolves after abort (no leak)', async () => {
+    const setupFn = await setup();
+    const ac = new AbortController();
+    let resolveCreateChannel!: (c: typeof mockChannel) => void;
+    mockCreateChannel.mockReturnValueOnce(
+      new Promise<typeof mockChannel>((resolve) => {
+        resolveCreateChannel = resolve;
+      }),
+    );
+    setTimeout(() => {
+      ac.abort(new Error('cancelled'));
+    }, 5);
+    const promise = setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+      signal: ac.signal,
+    });
+    await expect(promise).rejects.toThrow('cancelled');
+
+    resolveCreateChannel(mockChannel);
+    await new Promise((r) => setImmediate(r));
+    expect(mockChannelClose).toHaveBeenCalled();
+  });
 });
 
 describe('SlothListenerHandle.close', () => {
