@@ -32,7 +32,11 @@ export async function setupDelayedMessageListener({
   if (signal?.aborted) throw signal.reason as unknown;
 
   const logger = resolveLogger(rawLogger, logLevel);
-  logger.debug(`sloth: setting up listener for ${config.serviceName}/${config.routingKey}`);
+  logger.debug(`sloth: setting up listener for ${config.serviceName}/${config.routingKey}`, {
+    event: 'sloth.listener.setup_started',
+    serviceName: config.serviceName,
+    routingKey: config.routingKey,
+  });
 
   let connection: ChannelModel | null = null;
   let channel: Channel | null = null;
@@ -50,7 +54,12 @@ export async function setupDelayedMessageListener({
         await c.close();
       }
     } catch (error) {
-      logger.error(`sloth: failed to release listener resources: ${errMessage(error)}`);
+      logger.error(`sloth: failed to release listener resources: ${errMessage(error)}`, {
+        event: 'sloth.listener.resources_release_failed',
+        serviceName: config.serviceName,
+        routingKey: config.routingKey,
+        reason: errMessage(error),
+      });
     }
   };
 
@@ -65,14 +74,23 @@ export async function setupDelayedMessageListener({
     channel = await raceWithAbort(connection.createChannel(), signal, safeClose);
 
     channel.on('error', (err: Error) => {
-      logger.error(`sloth: listener channel error: ${err.message}`);
+      logger.error(`sloth: listener channel error: ${err.message}`, {
+        event: 'sloth.listener.channel_error',
+        serviceName: config.serviceName,
+        routingKey: config.routingKey,
+        reason: err.message,
+      });
     });
 
     // Broker-initiated channel close: just log. Don't null `channel` here —
     // `closeResources` already nulls before calling close(), and the subsequent
     // `connection.close()` cascade tears the channel down on the broker side.
     channel.on('close', () => {
-      logger.warn('sloth: listener channel closed');
+      logger.warn('sloth: listener channel closed', {
+        event: 'sloth.listener.channel_closed',
+        serviceName: config.serviceName,
+        routingKey: config.routingKey,
+      });
     });
 
     // Sloth re-delivers via sloth.headers.exchange.response (headers exchange) —
@@ -103,7 +121,14 @@ export async function setupDelayedMessageListener({
               channel?.ack(message);
             })
             .catch((err: unknown) => {
-              logger.error(`sloth: onMessage handler failed: ${errMessage(err)}`);
+              logger.error(`sloth: onMessage handler failed: ${errMessage(err)}`, {
+                event: 'sloth.listener.handler_failed',
+                serviceName: config.serviceName,
+                routingKey: config.routingKey,
+                messageId: message.properties.messageId as string | undefined,
+                correlationId: message.properties.correlationId as string | undefined,
+                reason: errMessage(err),
+              });
               // requeue=false: rely on a broker-configured DLX for retries.
               channel?.nack(message, false, false);
             });
@@ -113,7 +138,13 @@ export async function setupDelayedMessageListener({
       signal,
     );
 
-    logger.info(`sloth: listener ready (queue=${queueName}, consumerTag=${consumerTag})`);
+    logger.info(`sloth: listener ready (queue=${queueName}, consumerTag=${consumerTag})`, {
+      event: 'sloth.listener.ready',
+      serviceName: config.serviceName,
+      routingKey: config.routingKey,
+      queueName,
+      consumerTag,
+    });
 
     return {
       consumerTag,
@@ -123,13 +154,24 @@ export async function setupDelayedMessageListener({
             await channel.cancel(consumerTag);
           }
         } catch (error) {
-          logger.error(`sloth: failed to cancel consumer: ${errMessage(error)}`);
+          logger.error(`sloth: failed to cancel consumer: ${errMessage(error)}`, {
+            event: 'sloth.listener.consumer_cancel_failed',
+            serviceName: config.serviceName,
+            routingKey: config.routingKey,
+            consumerTag,
+            reason: errMessage(error),
+          });
         }
         await closeResources();
       },
     };
   } catch (error) {
-    logger.error(`sloth: listener setup failed: ${errMessage(error)}`);
+    logger.error(`sloth: listener setup failed: ${errMessage(error)}`, {
+      event: 'sloth.listener.setup_failed',
+      serviceName: config.serviceName,
+      routingKey: config.routingKey,
+      reason: errMessage(error),
+    });
     await closeResources();
     throw error;
   }

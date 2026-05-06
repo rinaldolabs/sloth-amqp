@@ -153,7 +153,7 @@ describe('setupDelayedMessageListener', () => {
     });
 
     const consumeCallback = mockChannel.consume.mock.calls[0]?.[1] as (msg: unknown) => void;
-    const fakeMsg = { content: Buffer.from('{}') };
+    const fakeMsg = { content: Buffer.from('{}'), properties: { headers: {} } };
     consumeCallback(fakeMsg);
     await new Promise((r) => setImmediate(r));
 
@@ -174,13 +174,16 @@ describe('setupDelayedMessageListener', () => {
     });
 
     const consumeCallback = mockChannel.consume.mock.calls[0]?.[1] as (msg: unknown) => void;
-    const fakeMsg = { content: Buffer.from('{}') };
+    const fakeMsg = { content: Buffer.from('{}'), properties: { headers: {} } };
     consumeCallback(fakeMsg);
     await new Promise((r) => setImmediate(r));
 
     expect(mockChannelNack).toHaveBeenCalledWith(fakeMsg, false, false);
     expect(mockChannelAck).not.toHaveBeenCalled();
-    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('boom'));
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('boom'),
+      expect.objectContaining({ event: 'sloth.listener.handler_failed' }),
+    );
     await handle.close();
   });
 
@@ -195,10 +198,13 @@ describe('setupDelayedMessageListener', () => {
     });
 
     const consumeCallback = mockChannel.consume.mock.calls[0]?.[1] as (msg: unknown) => void;
-    consumeCallback({ content: Buffer.from('{}') });
+    consumeCallback({ content: Buffer.from('{}'), properties: { headers: {} } });
     await new Promise((r) => setImmediate(r));
 
-    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('string-failure'));
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('string-failure'),
+      expect.objectContaining({ event: 'sloth.listener.handler_failed' }),
+    );
     await handle.close();
   });
 
@@ -230,7 +236,10 @@ describe('setupDelayedMessageListener', () => {
 
     expect(channelErrorHandler).not.toBeNull();
     channelErrorHandler!(new Error('channel broke'));
-    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('channel error'));
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('channel error'),
+      expect.objectContaining({ event: 'sloth.listener.channel_error' }),
+    );
     await handle.close();
   });
 
@@ -245,7 +254,10 @@ describe('setupDelayedMessageListener', () => {
 
     expect(channelCloseHandler).not.toBeNull();
     channelCloseHandler!();
-    expect(mockLogger.warn).toHaveBeenCalledWith('sloth: listener channel closed');
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'sloth: listener channel closed',
+      expect.objectContaining({ event: 'sloth.listener.channel_closed' }),
+    );
     await handle.close();
   });
 
@@ -263,7 +275,10 @@ describe('setupDelayedMessageListener', () => {
     ).rejects.toThrow('channel error');
 
     expect(mockConnectionClose).toHaveBeenCalled();
-    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('channel error'));
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('channel error'),
+      expect.objectContaining({ event: 'sloth.listener.setup_failed' }),
+    );
   });
 
   it('uses NoOpLogger when no logger provided', async () => {
@@ -447,7 +462,10 @@ describe('SlothListenerHandle.close', () => {
 
     mockChannelCancel.mockRejectedValueOnce(new Error('cancel failed'));
     await handle.close();
-    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('cancel failed'));
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('cancel failed'),
+      expect.objectContaining({ event: 'sloth.listener.consumer_cancel_failed' }),
+    );
   });
 
   it('logs error when channel.close fails', async () => {
@@ -461,6 +479,9 @@ describe('SlothListenerHandle.close', () => {
 
     mockChannelClose.mockRejectedValueOnce(new Error('close failed'));
     await handle.close();
-    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('close failed'));
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('close failed'),
+      expect.objectContaining({ event: 'sloth.listener.resources_release_failed' }),
+    );
   });
 });
