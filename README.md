@@ -70,7 +70,7 @@ Optional fields on every variant:
 | `logLabel` | `string`       | Human-readable identifier used in log lines. Sanitized (control chars stripped, capped at 200 grapheme clusters). |
 | `logLevel` | `SlothLogLevel` | Minimum level for **this library's** log calls. The caller's logger is otherwise unchanged.                            |
 
-All variants are validated before any AMQP work happens: positive and finite numbers, valid `Date`, capped at ~100 years (`MAX_DELAY_SECONDS`). A `delayUntil` in the past is logged as a warning and still published — Sloth will deliver immediately, matching the upstream Go client's behavior.
+All variants are validated before any AMQP work happens: positive and finite numbers, valid `Date`, capped at ~100 years (`MAX_DELAY_SECONDS`). A `delayUntil` in the past is logged at `warn` and still published — Sloth will deliver immediately, matching the upstream Go client's behavior. If you set `logLevel: 'error'` (or wrap with `withLogLevel(..., 'error')`), this warning is suppressed; use `'warn'` or lower if you want to see past-date schedules.
 
 ### Listening for delivered messages
 
