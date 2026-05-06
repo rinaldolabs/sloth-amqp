@@ -36,7 +36,8 @@ This package implements a single messaging pattern: **delayed-message request/re
 ### Modules (all under `src/`)
 
 - **`connection.ts`** — `slothConnect(url, ...setups)` opens an `amqplib.ChannelModel`, runs optional `SlothSetup` functions, returns the model. Optional first arg `SlothConnectOptions { signal?, timeoutMs? }` bounds the connect+setup phase via `AbortSignal`. `slothClose` closes it. Caller owns the connection.
-- **`abort.ts`** — `combineAbort` composes `signal` + `timeoutMs` via `AbortSignal.any`. `raceWithAbort` races a promise against the signal with loser-cleanup support (closes resources that resolve after abort to avoid leaks). `safeClose` helper that calls `.close()` and swallows errors. Used by both `connection.ts` and `listener.ts`.
+- **`abort.ts`** — `combineAbort` composes `signal` + `timeoutMs` via `AbortSignal.any`. `raceWithAbort` races a promise against the signal with loser-cleanup support (closes resources that resolve after abort to avoid leaks). `safeClose` helper that calls `.close()` and swallows errors. Used by `connection.ts`, `listener.ts`, and `ping.ts`.
+- **`ping.ts`** — `ping(client, opts?)` opens a temporary channel, runs `checkExchange` against the Sloth request exchange, and closes. Suitable for k8s readiness/liveness probes. Accepts `signal` / `timeoutMs` / `logger`.
 - **`sender.ts`** — `createDelaySender(client)` returns a `DelaySender` object with an async `send<TData>(params)` method. Publishes to `sloth.direct.exchange.request` with routing key `delay`, headers `delay-until` (unix seconds) and `target` (`amqp://<service>/<key>`), body `JSON.stringify(data)`. Caches a single `ConfirmChannel` for the factory's lifetime, asserts the exchange once on first use, and re-creates the channel transparently on broker `error`/`close`. `send` resolves only after the broker confirms the publish; a broker nack rejects the promise.
 - **`listener.ts`** — `setupDelayedMessageListener(opts)` declares the response queue, binds it to `sloth.headers.exchange.response` with the headers binding `service: <serviceName>`, registers the consumer. Returns a `SlothListenerHandle { consumerTag, close() }`. `noAck: false`; handler success → `ack`, handler failure → `nack(requeue=false)` so the broker DLX takes over. Accepts optional `signal` / `timeoutMs` to bound the setup phase.
 - **`logger.ts`** — `SlothLogger` interface (`info/warn/error/debug` required, `child` optional). `NoOpLogger` is the default; `consoleLogger` is a `console`-backed shim for scripts/demos. `withLogLevel(logger, level)` filters by minimum level and only exposes `child` when the wrapped logger has it.
@@ -102,13 +103,18 @@ Anything exported from `src/index.ts` is part of the published API. Treat change
 
 - `slothConnect`, `slothClose` — `slothConnect` accepts optional `SlothConnectOptions { signal?, timeoutMs? }`
 - `createDelaySender` — returns a `DelaySender { send<TData>(params): Promise<void> }`
-- `setupDelayedMessageListener` — returns `SlothListenerHandle { consumerTag, close() }`
+- `setupDelayedMessageListener` — returns `SlothListenerHandle { consumerTag, close() }`. Accepts optional `signal` / `timeoutMs` on `SlothListenerOptions`.
+- `ping(client, opts?)` — health-check helper for k8s readiness probes
 - `MAX_DELAY_SECONDS`, `resolveDelaySeconds`, `sanitizeLabel`, `serializeData` — pure helpers exposed for callers that want to validate input ahead of `send`
 - `DelaySender` — interface returned by `createDelaySender`
 - `NoOpLogger`, `consoleLogger`, `withLogLevel`
 - `SlothConfig`, `assertSafeSlothConfig`, `getSlothQueueName`, `getSlothTarget`
 - `slothRequestExchangeName`, `slothResponseExchangeName`, `defaultListenerQueueExpiresMs`
-- Types: `SlothLogger`, `SlothLogLevel`, `DelaySpec`, `SendDelayMessageParams<TData>`, `SlothListenerOptions`, `SlothListenerHandle`, `SlothSetup`
+- Types: `SlothLogger`, `SlothLogLevel`, `DelaySpec`, `SendDelayMessageParams<TData>`, `SlothListenerOptions`, `SlothListenerHandle`, `SlothSetup`, `SlothConnectOptions`, `PingOptions`
+
+### Stable log event names
+
+Logger calls emit an object-first second arg with a stable `event` string. The catalogue lives in README under "Log events" and is part of the public contract — renames are breaking changes. Sender events are prefixed `sloth.publish.*`, listener events `sloth.listener.*`, ping events `sloth.ping.*`.
 
 ## Resource hygiene
 

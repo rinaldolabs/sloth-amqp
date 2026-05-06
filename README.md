@@ -2,7 +2,12 @@
 
 [![CI](https://github.com/rinaldolabs/sloth-amqp/actions/workflows/ci.yml/badge.svg)](https://github.com/rinaldolabs/sloth-amqp/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@rinaldolabs/sloth-amqp.svg)](https://www.npmjs.com/package/@rinaldolabs/sloth-amqp)
+[![install size](https://packagephobia.com/badge?p=@rinaldolabs/sloth-amqp)](https://packagephobia.com/result?p=@rinaldolabs/sloth-amqp)
+[![bundle size](https://img.shields.io/badge/bundle-%3C6KB%20gz-brightgreen)](./.size-limit.cjs)
+[![types: built-in](https://img.shields.io/badge/types-built--in-blue)](./dist/index.d.ts)
+[![Node](https://img.shields.io/node/v/@rinaldolabs/sloth-amqp)](./package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![provenance](https://img.shields.io/badge/npm-provenance-blueviolet)](https://docs.npmjs.com/generating-provenance-statements)
 
 Node.js TypeScript client for [Sloth](https://gitlab.com/unboundsoftware/sloth) — a delayed-message delivery service over AMQP/RabbitMQ.
 
@@ -97,6 +102,75 @@ const handle = await setupDelayedMessageListener({
 process.on('SIGTERM', () => void handle.close());
 process.on('SIGINT', () => void handle.close());
 ```
+
+### Health checks
+
+`ping(client, opts?)` is a cheap liveness probe — it opens a temporary channel, asserts that the Sloth request exchange is reachable, and closes the channel. Suitable for Kubernetes readiness/liveness endpoints and graceful-startup gates.
+
+```ts
+import { ping, slothConnect } from '@rinaldolabs/sloth-amqp';
+
+const client = await slothConnect(process.env.AMQP_URL);
+
+// In your /readyz handler:
+app.get('/readyz', async (_req, res) => {
+  try {
+    await ping(client, { timeoutMs: 2_000 });
+    res.status(200).send('ok');
+  } catch {
+    res.status(503).send('sloth unreachable');
+  }
+});
+```
+
+The probe completes if and only if (1) the broker accepts a new channel on the existing connection and (2) the Sloth request exchange exists. `ping` accepts the same `signal` / `timeoutMs` as the other entry points.
+
+### Tracing and message identity
+
+Every `send` publishes the message with an auto-generated `messageId` (UUID via `node:crypto`'s `randomUUID`) on the AMQP basic properties. Consumers read it via `message.properties.messageId` — useful as a free idempotency key. Callers can override with their own ID for deterministic dedup.
+
+`correlationId` is forwarded to AMQP basic properties when set; consumers read it via `message.properties.correlationId`.
+
+For distributed tracing, pass W3C trace context as headers — they survive the Sloth hop without the package taking an OpenTelemetry dependency:
+
+```ts
+import { context, propagation } from '@opentelemetry/api';
+
+const carrier: Record<string, string> = {};
+propagation.inject(context.active(), carrier);
+
+await send({
+  data,
+  config,
+  delaySeconds: 60,
+  logger,
+  correlationId: 'order-abc-123',
+  headers: carrier, // forwards traceparent, tracestate
+});
+```
+
+The headers `delay-until` and `target` are reserved by the Sloth wire protocol — passing them throws before any AMQP work happens.
+
+### Log events
+
+Every log call from this package emits an object-first second argument with a stable `event` name plus context fields. The names below are part of the public contract — renames are breaking changes.
+
+| Event | Level | Where | Context fields |
+| ----- | ----- | ----- | -------------- |
+| `sloth.publish.scheduling` | debug | sender | `serviceName`, `routingKey`, `messageId`, `correlationId`, `delayDesc` |
+| `sloth.publish.confirmed` | info | sender | + `durationMs` |
+| `sloth.publish.back_pressured` | warn | sender | `serviceName`, `routingKey`, `messageId` |
+| `sloth.publish.failed` | error | sender | + `durationMs`, `reason` |
+| `sloth.publish.past_date_warning` | warn | sender | `serviceName`, `routingKey` |
+| `sloth.listener.setup_started` | debug | listener | `serviceName`, `routingKey` |
+| `sloth.listener.ready` | info | listener | + `queueName`, `consumerTag` |
+| `sloth.listener.handler_failed` | error | listener | + `messageId`, `correlationId`, `reason` |
+| `sloth.listener.channel_error` | error | listener | + `reason` |
+| `sloth.listener.channel_closed` | warn | listener | `serviceName`, `routingKey` |
+| `sloth.listener.consumer_cancel_failed` | error | listener | + `consumerTag`, `reason` |
+| `sloth.listener.resources_release_failed` | error | listener | + `reason` |
+| `sloth.listener.setup_failed` | error | listener | + `reason` |
+| `sloth.ping.failed` | error | ping | `reason` |
 
 ### Cancellation and timeouts
 
@@ -240,6 +314,26 @@ import type {
   DelaySpec,
 } from '@rinaldolabs/sloth-amqp';
 ```
+
+## Why this and not …
+
+| Capability | `@rinaldolabs/sloth-amqp` | `amqplib` raw | `amqp-connection-manager` | `bullmq` |
+| ---------- | ------------------------- | ------------- | ------------------------- | -------- |
+| Sloth wire protocol (delayed messages over AMQP) | ✅ first-class | ❌ build it yourself | ❌ build it yourself | ❌ different system |
+| Confirm-channel publish with broker ack | ✅ auto | manual | ✅ | n/a |
+| Auto-recreate channel on broker error/close | ✅ | manual | ✅ | n/a |
+| `AbortSignal` + `timeoutMs` on connect/setup | ✅ verbatim WHATWG reasons | ❌ | ❌ | partial |
+| `messageId` auto-UUID + `correlationId` propagation | ✅ | manual | manual | ✅ |
+| W3C trace-context (`traceparent`) header passthrough | ✅ via `headers` | manual | manual | partial |
+| Health-check helper (`ping`) | ✅ | manual | manual | n/a |
+| Dual ESM + CJS published | ✅ | ✅ | ✅ | ✅ |
+| Built-in TypeScript types (no `@types/*`) | ✅ | ✅ | ✅ | ✅ |
+| Zero runtime dependencies | ✅ (amqplib is a peer dep) | n/a | adds reconnect-core | many |
+| Object-first structured log events | ✅ stable contract | n/a | n/a | partial |
+| Bundle size (minified+brotli) | ~3 KB per format | n/a | larger | much larger |
+| npm provenance (Sigstore) | ✅ | varies | varies | varies |
+
+`amqplib` is a peer dependency, not a competitor — this package is a thin layer on top. The comparison is for "what can I drop in without rebuilding the same wheels every consumer of `amqplib` builds."
 
 ## Wire compatibility
 
