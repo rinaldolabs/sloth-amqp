@@ -6,10 +6,9 @@
   "semanticCommitType": "chore",
   "platformAutomerge": true,
   "rebaseWhen": "behind-base-branch",
-  "prNotPendingHours": 12,
-  "minimumReleaseAge": "3 days",
-  "schedule": ["after 8pm every weekday", "every weekend"],
-  "timezone": "Europe/Stockholm",
+  "prNotPendingHours": 0,
+  "minimumReleaseAge": null,
+  "schedule": ["at any time"],
   "separateMinorPatch": false,
   "separateMajorMinor": true,
   "prHourlyLimit": 2,
@@ -22,7 +21,7 @@
   },
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": ["before 4am on monday"]
+    "schedule": ["at any time"]
   },
   "customManagers": [
     {
