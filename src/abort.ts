@@ -17,9 +17,12 @@ export const safeClose = (resource: { close: () => Promise<unknown> }): Promise<
  * when neither input is provided so callers can short-circuit.
  *
  * The composite uses `AbortSignal.any([...])` (Node 20+/24 native) so
- * whichever source aborts first wins — and `signal.reason` carries the
- * correct WHATWG DOMException by reference: `TimeoutError` from
- * `AbortSignal.timeout`, `AbortError` from `AbortController.abort()`.
+ * whichever source aborts first wins, and the firing source's `reason`
+ * propagates verbatim by reference. Common reasons:
+ * - `AbortSignal.timeout(ms)` → `DOMException` with `name === 'TimeoutError'`
+ * - `controller.abort()` (no argument) → `DOMException` with `name === 'AbortError'`
+ * - `controller.abort(custom)` → `custom` as-is (could be an `Error`, a
+ *   string, or any other value — this package never wraps it).
  *
  * Validates `timeoutMs` upfront so consumers get a clear error before any
  * I/O is attempted.

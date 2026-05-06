@@ -118,6 +118,31 @@ describe('slothConnect', () => {
     expect(setup).toHaveBeenCalledWith(mockClient);
   });
 
+  it('treats undefined in the options slot as no-options and still runs trailing setups', async () => {
+    // Regression: a caller writing `slothConnect(url, maybeOpts, setupFn)` with
+    // `maybeOpts` being an optional variable that happens to be `undefined`
+    // used to silently drop the trailing setup functions.
+    const { slothConnect } = await import('../connection.js');
+    const setup1 = vi.fn().mockResolvedValue(undefined);
+    const setup2 = vi.fn().mockResolvedValue(undefined);
+    const maybeOpts = undefined;
+    const client = await slothConnect(
+      'amqp://localhost',
+      maybeOpts as unknown as never,
+      setup1,
+      setup2,
+    );
+    expect(setup1).toHaveBeenCalledWith(client);
+    expect(setup2).toHaveBeenCalledWith(client);
+  });
+
+  it('also tolerates undefined interleaved with setup functions', async () => {
+    const { slothConnect } = await import('../connection.js');
+    const setup = vi.fn().mockResolvedValue(undefined);
+    await slothConnect('amqp://localhost', setup, undefined as unknown as never);
+    expect(setup).toHaveBeenCalledTimes(1);
+  });
+
   it('swallows errors from the loser-cleanup close() call', async () => {
     const { slothConnect } = await import('../connection.js');
     const ac = new AbortController();

@@ -5,7 +5,16 @@ import type { SlothSetup } from './types.js';
 /**
  * Optional per-call cancellation knobs. Either is sufficient on its own;
  * if both are provided, whichever fires first wins and its `reason`
- * (`AbortError` or `TimeoutError`) is what the rejection carries.
+ * propagates verbatim to the rejection.
+ *
+ * The reason follows WHATWG semantics:
+ * - `AbortSignal.timeout(ms)` rejects with a `DOMException` whose `name` is
+ *   `'TimeoutError'`.
+ * - `controller.abort()` (no argument) rejects with a `DOMException` whose
+ *   `name` is `'AbortError'`.
+ * - `controller.abort(reason)` rejects with `reason` as-is — could be an
+ *   `Error`, a `DOMException`, a string, or anything else the caller passes.
+ *   This package never wraps; whatever you pass is what callers catch.
  */
 export interface SlothConnectOptions {
   /** Caller-supplied AbortSignal — useful when one signal scopes many ops. */
@@ -25,20 +34,27 @@ export async function slothConnect(
 ): Promise<ChannelModel>;
 export async function slothConnect(
   url: string,
-  ...rest: (SlothConnectOptions | SlothSetup)[]
+  ...rest: (SlothConnectOptions | SlothSetup | undefined)[]
 ): Promise<ChannelModel> {
   if (!url) {
     throw new Error('AMQP URL must not be empty');
   }
   const [first, ...remaining] = rest;
-  const options: SlothConnectOptions = isOptions(first) ? first : {};
-  // After the discriminator: anything remaining must be a SlothSetup. The
-  // type-narrowing keeps the public overload signatures honest.
-  const setups: SlothSetup[] = isOptions(first)
-    ? (remaining as SlothSetup[])
-    : first !== undefined
-      ? [first, ...(remaining as SlothSetup[])]
-      : [];
+  const firstIsOptions = isOptions(first);
+  const options: SlothConnectOptions = firstIsOptions ? first : {};
+  // Discriminator semantics:
+  // - `first` is an options bag → setups are the remaining args.
+  // - `first` is a setup function → it plus remaining args are setups.
+  // - `first` is `undefined` → treat as "no options provided", use remaining
+  //   args as setups. This matters when a caller passes
+  //   `slothConnect(url, maybeOptions, setupFn)` with `maybeOptions` being
+  //   an optional variable that happens to be `undefined`.
+  const restSetups = remaining.filter((v): v is SlothSetup => v !== undefined);
+  const setups: SlothSetup[] = firstIsOptions
+    ? restSetups
+    : first === undefined
+      ? restSetups
+      : [first, ...restSetups];
 
   const signal = combineAbort(options.signal, options.timeoutMs);
 
