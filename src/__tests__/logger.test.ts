@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { consoleLogger, NoOpLogger, withLogLevel, type SlothLogger } from '../logger.js';
 
 const makeMockLogger = (): SlothLogger => ({
@@ -120,38 +120,42 @@ describe('withLogLevel', () => {
 });
 
 describe('consoleLogger', () => {
-  const spies = {
-    log: vi.spyOn(console, 'log').mockImplementation(() => {}),
-    warn: vi.spyOn(console, 'warn').mockImplementation(() => {}),
-    error: vi.spyOn(console, 'error').mockImplementation(() => {}),
-    debug: vi.spyOn(console, 'debug').mockImplementation(() => {}),
-  };
+  // Spies are created per-test and restored after each one so the underlying
+  // console methods don't stay mocked for the rest of the Vitest worker.
+  let logSpy: MockInstance<typeof console.log>;
+  let warnSpy: MockInstance<typeof console.warn>;
+  let errorSpy: MockInstance<typeof console.error>;
+  let debugSpy: MockInstance<typeof console.debug>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  });
 
   afterEach(() => {
-    spies.log.mockClear();
-    spies.warn.mockClear();
-    spies.error.mockClear();
-    spies.debug.mockClear();
+    vi.restoreAllMocks();
   });
 
   it('forwards info to console.log with meta', () => {
     consoleLogger.info('msg', { a: 1 }, 'b');
-    expect(spies.log).toHaveBeenCalledWith('msg', { a: 1 }, 'b');
+    expect(logSpy).toHaveBeenCalledWith('msg', { a: 1 }, 'b');
   });
 
   it('forwards warn to console.warn', () => {
     consoleLogger.warn('w');
-    expect(spies.warn).toHaveBeenCalledWith('w');
+    expect(warnSpy).toHaveBeenCalledWith('w');
   });
 
   it('forwards error to console.error', () => {
     consoleLogger.error('e', new Error('boom'));
-    expect(spies.error).toHaveBeenCalledWith('e', new Error('boom'));
+    expect(errorSpy).toHaveBeenCalledWith('e', new Error('boom'));
   });
 
   it('forwards debug to console.debug', () => {
     consoleLogger.debug('d');
-    expect(spies.debug).toHaveBeenCalledWith('d');
+    expect(debugSpy).toHaveBeenCalledWith('d');
   });
 
   it('has no child method (contextual logging belongs in structured loggers)', () => {
