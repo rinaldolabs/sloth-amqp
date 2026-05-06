@@ -14,7 +14,7 @@ This package implements the same wire protocol as [`gitlab.com/unboundsoftware/s
 npm install @rinaldolabs/sloth-amqp amqplib
 ```
 
-Requires `amqplib >= 1.0.0` as a peer dependency.
+Requires `amqplib` `^1.0.0` as a peer dependency.
 
 ## How Sloth works
 
@@ -182,7 +182,7 @@ The wire protocol — exchange names, routing keys, `delay-until` / `target` hea
 
 - **Per-call config instead of a type registry.** The Go client uses `reflect.TypeOf` to map request structs to routing keys at registration time (`New(serviceName, url, mappings...)`). We require the caller to pass `{ serviceName, routingKey }` per send. TypeScript has no runtime type reflection for arbitrary types, and explicit config is type-safer than a runtime registry.
 - **Explicit listener handle.** `setupDelayedMessageListener` returns `SlothListenerHandle { consumerTag, close() }`. The Go client returns a `goamqp.Setup` function and exposes `ResponseListener(handler, types...)`. The handle makes shutdown order explicit and prevents leaked consumers.
-- **Caller-owned connection.** `slothConnect` returns a `ChannelModel` that the caller owns; `slothDelaySender(client)` is a factory that does not take ownership. The Go client's `New()` opens and `Close()` closes the connection. The split lets one connection serve multiple senders/listeners and makes tests trivial.
+- **Caller-owned connection.** `slothConnect` returns a `ChannelModel` that the caller owns; `slothDelaySender(client)` is a factory that does not take ownership. The Go client's `New()` opens and `Close()` closes the connection. The split lets one connection serve multiple senders/listeners and makes tests trivial. The factory caches one [confirm channel](https://www.rabbitmq.com/docs/confirms#publisher-confirms) for its lifetime — `await send(...)` resolves only after the broker has acknowledged the publish (it rejects on a broker nack), and the channel is transparently re-created if the broker closes or errors it.
 - **Three delay variants.** `delayMinutes`, `delaySeconds`, or `delayUntil: Date` — exactly one per send, enforced by a discriminated union at compile time and by a runtime guard at the system boundary. The Go client takes a single `time.Time`.
 - **Strict ack model.** The listener uses `noAck: false` and explicitly `ack`s on success or `nack(requeue=false)` on handler failure, relying on a broker-configured DLX for retries. The Go client uses goamqp's defaults.
 - **Injected logger.** All logging goes through an injected `SlothLogger` (`NoOpLogger` by default). Nothing is written to `console`.
