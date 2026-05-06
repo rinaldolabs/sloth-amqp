@@ -10,10 +10,10 @@ import { GenericContainer, Wait, type StartedTestContainer } from 'testcontainer
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
+  createDelaySender,
   setupDelayedMessageListener,
   slothClose,
   slothConnect,
-  slothDelaySender,
   slothRequestExchangeName,
   slothResponseExchangeName,
   type SlothConfig,
@@ -60,7 +60,7 @@ afterAll(async () => {
   }
 });
 
-describe('publish path: slothDelaySender produces the wire format Sloth expects', () => {
+describe('publish path: createDelaySender produces the wire format Sloth expects', () => {
   it('publishes to the request exchange with delay routing key, target header, and delay-until', async () => {
     // All AMQP handles are tracked so we close them in finally, even if an
     // assertion throws — open AMQP sockets keep vitest from exiting cleanly.
@@ -86,7 +86,7 @@ describe('publish path: slothDelaySender produces the wire format Sloth expects'
       });
 
       client = await slothConnect(amqpUrl);
-      const send = slothDelaySender(client);
+      const { send } = createDelaySender(client);
       const before = Math.floor(Date.now() / 1000);
       await send({
         data: { kind: 'reminder', userId: 'u-1' },

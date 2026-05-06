@@ -5,7 +5,7 @@
 //
 // On Node 24, type stripping is enabled by default for erasable TypeScript syntax.
 
-import { slothClose, slothConnect, slothDelaySender, type SlothLogger } from '../src/index.ts';
+import { createDelaySender, slothClose, slothConnect, type SlothLogger } from '../src/index.ts';
 
 const consoleLogger: SlothLogger = {
   info: (msg) => {
@@ -30,7 +30,7 @@ if (!amqpUrl) {
 }
 
 const client = await slothConnect(amqpUrl);
-const send = slothDelaySender(client);
+const { send } = createDelaySender(client);
 
 await send({
   data: { kind: 'reminder', userId: 'user-123' },

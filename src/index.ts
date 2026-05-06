@@ -3,12 +3,13 @@ export { setupDelayedMessageListener } from './listener.js';
 export { consoleLogger, NoOpLogger, withLogLevel } from './logger.js';
 export type { SlothLogger, SlothLogLevel } from './logger.js';
 export {
+  createDelaySender,
   MAX_DELAY_SECONDS,
-  resolveDelayUnixSeconds,
+  resolveDelaySeconds,
   sanitizeLabel,
   serializeData,
-  slothDelaySender,
 } from './sender.js';
+export type { DelaySender } from './sender.js';
 export type {
   DelaySpec,
   SendDelayMessageParams,
