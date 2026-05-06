@@ -6,7 +6,7 @@
 
 Node.js TypeScript client for [Sloth](https://gitlab.com/unboundsoftware/sloth) — a delayed-message delivery service over AMQP/RabbitMQ.
 
-This package is the TypeScript counterpart to `gitlab.com/unboundsoftware/sloth/client-amqp` and is wire-compatible with Sloth `amqp:0.0.10`. It complements [@opzkit/nodeamqp](https://www.npmjs.com/package/@opzkit/nodeamqp), which handles event streams and request/response patterns.
+This package implements the same wire protocol as [`gitlab.com/unboundsoftware/sloth/client-amqp`](https://gitlab.com/unboundsoftware/sloth/client-amqp) (the canonical Go client) — the two can interoperate against the same Sloth server — but the TypeScript API is intentionally different; see [Compared to the Go client](#compared-to-the-go-client). The `SlothSetup` composition pattern is borrowed from [@opzkit/nodeamqp](https://www.npmjs.com/package/@opzkit/nodeamqp); the two libraries are otherwise independent and cover different patterns (`nodeamqp` handles event streams and request/response; this one handles delayed messages via Sloth).
 
 ## Installation
 
@@ -54,6 +54,23 @@ await send({
   logger: myLogger,
 });
 ```
+
+Each call must specify **exactly one** of three delay variants:
+
+```ts
+await send({ data, config, logger, delayMinutes: 30 });
+await send({ data, config, logger, delaySeconds: 90 });
+await send({ data, config, logger, delayUntil: new Date('2030-01-01T00:00:00Z') });
+```
+
+Optional fields on every variant:
+
+| Field      | Type           | Notes                                                                                                                  |
+| ---------- | -------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `logLabel` | `string`       | Human-readable identifier used in log lines. Sanitized (control chars stripped, capped at 200 grapheme clusters). |
+| `logLevel` | `SlothLogLevel` | Minimum level for **this library's** log calls. The caller's logger is otherwise unchanged.                            |
+
+All variants are validated before any AMQP work happens: positive and finite numbers, valid `Date`, capped at ~100 years (`MAX_DELAY_SECONDS`). A `delayUntil` in the past is logged as a warning and still published — Sloth will deliver immediately, matching the upstream Go client's behavior.
 
 ### Listening for delivered messages
 
@@ -105,20 +122,52 @@ const client = await slothConnect(process.env.AMQP_URL, async (conn) => {
 });
 ```
 
-## Protocol constants
+## Public exports
+
+Everything below is re-exported from the package root.
+
+### Protocol constants and helpers
 
 ```ts
 import {
-  slothRequestExchangeName, // "sloth.direct.exchange.request"
-  slothResponseExchangeName, // "sloth.headers.exchange.response"
-  getSlothQueueName, // (config) => "sloth.headers.exchange.response.queue.<serviceName>"
-  getSlothTarget, // (config) => "amqp://<serviceName>/<routingKey>"
+  slothRequestExchangeName,        // "sloth.direct.exchange.request"
+  slothResponseExchangeName,       // "sloth.headers.exchange.response"
+  defaultListenerQueueExpiresMs,   // 5 days, in ms
+  getSlothQueueName,               // (config) => "sloth.headers.exchange.response.queue.<serviceName>"
+  getSlothTarget,                  // (config) => "amqp://<serviceName>/<routingKey>"
+  assertSafeSlothConfig,           // throws if serviceName/routingKey contain unsafe chars
+} from '@rinaldolabs/sloth-amqp';
+```
+
+### Pure helpers (re-exported for callers that want to validate ahead of `send`)
+
+```ts
+import {
+  MAX_DELAY_SECONDS,        // ~100 years in seconds
+  resolveDelayUnixSeconds,  // (DelaySpec) => { delayUntilUnix, delayDesc, pastDateWarning? }
+  sanitizeLabel,            // (raw) => safe single-line string, max 200 grapheme clusters
+  serializeData,            // (data) => Buffer; throws on non-JSON-serializable input
+} from '@rinaldolabs/sloth-amqp';
+```
+
+### Types
+
+```ts
+import type {
+  SlothConfig,
+  SlothLogger,
+  SlothLogLevel,
+  SlothSetup,
+  SlothListenerOptions,
+  SlothListenerHandle,
+  SendDelayMessageParams,
+  DelaySpec,
 } from '@rinaldolabs/sloth-amqp';
 ```
 
 ## Wire compatibility
 
-Implements the Sloth AMQP protocol as defined in [gitlab.com/unboundsoftware/sloth/amqp](https://gitlab.com/unboundsoftware/sloth/amqp) (compatible with `amqp:0.0.10`).
+Implements the Sloth AMQP protocol as defined by the upstream [`amqp` source plugin](https://gitlab.com/unboundsoftware/sloth/amqp). The wire format — exchange names, routing keys, header names and types, queue naming — is treated as a fixed contract and verified by `test/integration/wire-protocol.test.ts` against a real RabbitMQ container.
 
 Headers sent with each delayed message:
 
@@ -129,15 +178,14 @@ Headers sent with each delayed message:
 
 ## Compared to the Go client
 
-This package implements the same wire protocol as [`gitlab.com/unboundsoftware/sloth/client-amqp`](https://gitlab.com/unboundsoftware/sloth/client-amqp) — they can interoperate with the same Sloth server. The TypeScript API intentionally diverges from the Go API where idiomatic TypeScript suggests a different shape:
+The wire protocol — exchange names, routing keys, `delay-until` / `target` headers — is identical to [`gitlab.com/unboundsoftware/sloth/client-amqp`](https://gitlab.com/unboundsoftware/sloth/client-amqp). The TypeScript API intentionally diverges from the Go API where idiomatic TypeScript suggests a different shape:
 
-- **Per-call config instead of a type registry.** The Go client uses `reflect.TypeOf` to map request structs to routing keys at registration time. We require the caller to pass `{ serviceName, routingKey }` per send. TypeScript has no runtime type reflection for arbitrary types, and explicit config is type-safer than a runtime registry.
-- **Explicit listener handle.** `setupDelayedMessageListener` returns `SlothListenerHandle { consumerTag, close() }`. The Go client returns a `goamqp.Setup` function. The handle makes shutdown order explicit and prevents leaked consumers.
-- **Caller-owned connection.** `slothConnect` returns a `ChannelModel` that the caller owns; `slothDelaySender(client)` is a factory that does not take ownership. The Go client's `New()` opens and closes its own connection. The split lets one connection serve multiple senders/listeners and makes tests trivial.
+- **Per-call config instead of a type registry.** The Go client uses `reflect.TypeOf` to map request structs to routing keys at registration time (`New(serviceName, url, mappings...)`). We require the caller to pass `{ serviceName, routingKey }` per send. TypeScript has no runtime type reflection for arbitrary types, and explicit config is type-safer than a runtime registry.
+- **Explicit listener handle.** `setupDelayedMessageListener` returns `SlothListenerHandle { consumerTag, close() }`. The Go client returns a `goamqp.Setup` function and exposes `ResponseListener(handler, types...)`. The handle makes shutdown order explicit and prevents leaked consumers.
+- **Caller-owned connection.** `slothConnect` returns a `ChannelModel` that the caller owns; `slothDelaySender(client)` is a factory that does not take ownership. The Go client's `New()` opens and `Close()` closes the connection. The split lets one connection serve multiple senders/listeners and makes tests trivial.
+- **Three delay variants.** `delayMinutes`, `delaySeconds`, or `delayUntil: Date` — exactly one per send, enforced by a discriminated union at compile time and by a runtime guard at the system boundary. The Go client takes a single `time.Time`.
 - **Strict ack model.** The listener uses `noAck: false` and explicitly `ack`s on success or `nack(requeue=false)` on handler failure, relying on a broker-configured DLX for retries. The Go client uses goamqp's defaults.
 - **Injected logger.** All logging goes through an injected `SlothLogger` (`NoOpLogger` by default). Nothing is written to `console`.
-
-These are deliberate API choices, not accidents. The wire protocol — exchange names, routing keys, `delay-until` and `target` headers — is identical to the Go client.
 
 ## Related
 
@@ -150,7 +198,7 @@ Built on the work of [Unbound Software AB](https://gitlab.com/unboundsoftware) a
 
 - **[`gitlab.com/unboundsoftware/sloth`](https://gitlab.com/unboundsoftware/sloth)** — the Sloth delayed-message AMQP server (MIT). The wire protocol implemented here (`sloth.direct.exchange.request`, `sloth.headers.exchange.response`, `delay-until` / `target` headers) comes directly from the upstream Sloth `amqp` source plugin.
 - **[`gitlab.com/unboundsoftware/sloth/client-amqp`](https://gitlab.com/unboundsoftware/sloth/client-amqp)** — the canonical Go client (MIT). Used as the API-shape and behavior reference; the [Compared to the Go client](#compared-to-the-go-client) section above documents intentional divergences.
-- **[`github.com/opzkit/nodeamqp`](https://github.com/opzkit/nodeamqp)** — sibling Node.js AMQP library by the same upstream maintainer (MIT). Project scaffolding (release-please, conventional commits, peer-dependency pattern) was modeled on it.
+- **[`github.com/opzkit/nodeamqp`](https://github.com/opzkit/nodeamqp)** — Node.js AMQP library for event streams and request/response (MIT). The `SlothSetup` composition pattern (passing setup functions to `slothConnect`) and project scaffolding (release-please, conventional commits, `amqplib` as a peer dependency) were modeled on it. The runtime code is independent.
 
 Standards and specs this project follows: [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/), [Semantic Versioning 2.0.0](https://semver.org/), [Keep a Changelog](https://keepachangelog.com/), and the [AMQP 0-9-1 protocol](https://www.rabbitmq.com/tutorials/amqp-concepts).
 

@@ -1,5 +1,6 @@
-// Wire protocol constants for gitlab.com/unboundsoftware/sloth amqp:0.0.10
-// See: ServiceRequestConsumer("delay", ...) and PublishServiceResponse(...) in amqp.go
+// Wire protocol constants for the Sloth amqp source plugin.
+// See: ServiceRequestConsumer("delay", ...) and PublishServiceResponse(...) in
+// gitlab.com/unboundsoftware/sloth/amqp/amqp.go
 export const slothRequestExchangeName = 'sloth.direct.exchange.request';
 export const slothResponseExchangeName = 'sloth.headers.exchange.response';
 
