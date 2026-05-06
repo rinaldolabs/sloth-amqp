@@ -14,7 +14,13 @@ export const MAX_DELAY_SECONDS = 100 * 365 * 24 * 3600;
  */
 const RESERVED_HEADERS: ReadonlySet<string> = new Set(['delay-until', 'target']);
 
-const mergeReservedHeaders = (
+/**
+ * Throws if `headers` contains any key reserved by the Sloth wire protocol
+ * (`delay-until`, `target`). Returns the input unchanged on success — or an
+ * empty object when called with `undefined` so callsites can spread the
+ * result directly without an extra null check.
+ */
+const assertNoReservedHeaders = (
   headers: Record<string, string | number | boolean> | undefined,
 ): Record<string, string | number | boolean> => {
   if (!headers) return {};
@@ -202,11 +208,12 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
     // Auto-generate a message ID per send unless caller provided one. UUIDs
     // give consumers a free idempotency key without us implementing dedup.
     const messageId = params.messageId ?? randomUUID();
-    const extraHeaders = mergeReservedHeaders(params.headers);
+    const extraHeaders = assertNoReservedHeaders(params.headers);
     const headers = {
       ...extraHeaders,
-      // Reserved Sloth wire-protocol headers — written last so callers cannot
-      // override them via params.headers (also enforced by mergeReservedHeaders).
+      // Reserved Sloth wire-protocol headers — written last as a defence-in-depth
+      // against any future spread mistake; assertNoReservedHeaders has already
+      // rejected attempts to set these via params.headers.
       'delay-until': delayUntilUnix, // seconds — Sloth parses as int64 Unix timestamp
       target: getSlothTarget(config), // amqp://{serviceName}/{routingKey}
     };
