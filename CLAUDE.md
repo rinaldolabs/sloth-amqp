@@ -35,7 +35,7 @@ This package implements a single messaging pattern: **delayed-message request/re
 - **`connection.ts`** — `slothConnect(url, ...setups)` opens an `amqplib.ChannelModel`, runs optional `SlothSetup` functions, returns the model. `slothClose` closes it. Caller owns the connection.
 - **`sender.ts`** — `slothDelaySender(client)` returns an async `send<TData>(params)` function. Publishes to `sloth.direct.exchange.request` with routing key `delay`, headers `delay-until` (unix seconds) and `target` (`amqp://<service>/<key>`), body `JSON.stringify(data)`. Caches a single `ConfirmChannel` for the factory's lifetime, asserts the exchange once on first use, and re-creates the channel transparently on broker `error`/`close`. `send` resolves only after the broker confirms the publish; a broker nack rejects the promise.
 - **`listener.ts`** — `setupDelayedMessageListener(opts)` declares the response queue, binds it to `sloth.headers.exchange.response` with the headers binding `service: <serviceName>`, registers the consumer. Returns a `SlothListenerHandle { consumerTag, close() }`. `noAck: false`; handler success → `ack`, handler failure → `nack(requeue=false)` so the broker DLX takes over.
-- **`logger.ts`** — `SlothLogger` interface (info/warn/error/debug/child). `NoOpLogger` is the default. `withLogLevel(logger, level)` filters by minimum level.
+- **`logger.ts`** — `SlothLogger` interface (`info/warn/error/debug` required, `child` optional). `NoOpLogger` is the default; `consoleLogger` is a `console`-backed shim for scripts/demos. `withLogLevel(logger, level)` filters by minimum level and only exposes `child` when the wrapped logger has it.
 - **`errors.ts`** — `errMessage(unknown)` extracts a safe string from any caught value. Used everywhere to avoid leaking stack traces.
 - **`types.ts`** — public param shapes (`SendDelayMessageParams<TData>`, `SlothListenerOptions`, `SlothListenerHandle`, `SlothSetup`).
 - **`utils.ts`** — protocol constants (exchange names, routing keys, default queue TTL), `SlothConfig`, and `assertSafeSlothConfig` which validates `serviceName`/`routingKey` against `[A-Za-z0-9._-]+` before they flow into AMQP routing strings.
@@ -99,7 +99,7 @@ Anything exported from `src/index.ts` is part of the published API. Treat change
 - `slothDelaySender` — generic over payload type `<TData>`
 - `setupDelayedMessageListener` — returns `SlothListenerHandle { consumerTag, close() }`
 - `MAX_DELAY_SECONDS`, `resolveDelayUnixSeconds`, `sanitizeLabel`, `serializeData` — pure helpers exposed for callers that want to validate input ahead of `send`
-- `NoOpLogger`, `withLogLevel`
+- `NoOpLogger`, `consoleLogger`, `withLogLevel`
 - `SlothConfig`, `assertSafeSlothConfig`, `getSlothQueueName`, `getSlothTarget`
 - `slothRequestExchangeName`, `slothResponseExchangeName`, `defaultListenerQueueExpiresMs`
 - Types: `SlothLogger`, `SlothLogLevel`, `DelaySpec`, `SendDelayMessageParams<TData>`, `SlothListenerOptions`, `SlothListenerHandle`, `SlothSetup`
