@@ -99,19 +99,58 @@ export const slothDelaySender = (
   client: ChannelModel,
 ): (<TData>(params: SendDelayMessageParams<TData>) => Promise<void>) => {
   let cached: ConfirmChannel | null = null;
+  // Single in-flight lock so concurrent send() calls share one channel-creation
+  // path instead of each opening their own (which would leak all but the last).
+  let inFlight: Promise<ConfirmChannel> | null = null;
+  // Marks the channel currently being opened so its event handlers can also
+  // clear `inFlight` if the channel dies before assertExchange resolves.
+  let pendingChan: ConfirmChannel | null = null;
 
-  const acquire = async (): Promise<ConfirmChannel> => {
-    if (cached) return cached;
+  const open = async (): Promise<ConfirmChannel> => {
     const chan = await client.createConfirmChannel();
+    pendingChan = chan;
+    const status: { dead: boolean } = { dead: false };
     const invalidate = (): void => {
+      status.dead = true;
       if (cached === chan) cached = null;
+      if (pendingChan === chan) {
+        pendingChan = null;
+        inFlight = null;
+      }
     };
     chan.on('error', invalidate);
     chan.on('close', invalidate);
-    // Routing key "delay" matches goamqp ServiceRequestConsumer("delay", ...) in amqp.go.
-    await chan.assertExchange(slothRequestExchangeName, 'direct', { durable: true });
+    try {
+      // Routing key "delay" matches goamqp ServiceRequestConsumer("delay", ...) in amqp.go.
+      await chan.assertExchange(slothRequestExchangeName, 'direct', { durable: true });
+    } catch (error) {
+      // assertExchange failed — close the orphan channel best-effort so it
+      // doesn't linger on the connection, then rethrow so the in-flight
+      // promise rejects and the next acquire() starts fresh.
+      try {
+        await chan.close();
+      } catch {
+        // already broken — nothing more to do
+      }
+      throw error;
+    }
+    if (status.dead) {
+      // The channel emitted error/close while assertExchange was in flight.
+      // Don't cache a dead channel — surface the failure so the caller retries.
+      throw new Error('sloth: confirm channel closed before publisher was ready');
+    }
     cached = chan;
     return chan;
+  };
+
+  const acquire = (): Promise<ConfirmChannel> => {
+    if (cached) return Promise.resolve(cached);
+    if (inFlight) return inFlight;
+    inFlight = open().finally(() => {
+      pendingChan = null;
+      inFlight = null;
+    });
+    return inFlight;
   };
 
   return async <TData>(params: SendDelayMessageParams<TData>): Promise<void> => {

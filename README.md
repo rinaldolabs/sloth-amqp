@@ -14,7 +14,7 @@ This package implements the same wire protocol as [`gitlab.com/unboundsoftware/s
 npm install @rinaldolabs/sloth-amqp amqplib
 ```
 
-Requires `amqplib` `^0.10.0` or `^1.0.0` as a peer dependency.
+Requires `amqplib` `^1.0.0` as a peer dependency.
 
 ## How Sloth works
 

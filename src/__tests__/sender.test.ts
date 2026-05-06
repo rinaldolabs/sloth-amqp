@@ -556,6 +556,111 @@ describe('slothDelaySender', () => {
     expect(mockAssertExchange).toHaveBeenCalledTimes(2);
   });
 
+  it('shares one channel-creation across concurrent first sends (no leak)', async () => {
+    // Multiple send() calls fired before the first createConfirmChannel resolves
+    // must all share the same in-flight acquire — otherwise each would create
+    // its own channel and only the last would win the cache, leaking the rest.
+    let resolveCreate: (chan: MockConfirmChannel) => void = () => {};
+    mockCreateConfirmChannel.mockImplementationOnce(
+      () =>
+        new Promise<MockConfirmChannel>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+
+    const { slothDelaySender } = await import('../sender.js');
+    const send = slothDelaySender(mockClient as never);
+
+    const p1 = send({ data: { n: 1 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    const p2 = send({ data: { n: 2 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    const p3 = send({ data: { n: 3 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+
+    resolveCreate(mockChannel);
+    await Promise.all([p1, p2, p3]);
+
+    expect(mockCreateConfirmChannel).toHaveBeenCalledTimes(1);
+    expect(mockAssertExchange).toHaveBeenCalledTimes(1);
+    expect(mockPublish).toHaveBeenCalledTimes(3);
+  });
+
+  it('closes the orphan channel and clears state when assertExchange fails', async () => {
+    const closeSpy = vi.fn().mockResolvedValue(undefined);
+    const failingChannel = { ...mockChannel, close: closeSpy };
+    mockCreateConfirmChannel.mockImplementationOnce(() => Promise.resolve(failingChannel));
+    mockAssertExchange.mockRejectedValueOnce(new Error('exchange-locked'));
+
+    const { slothDelaySender } = await import('../sender.js');
+    const send = slothDelaySender(mockClient as never);
+
+    await expect(
+      send({ data: { n: 1 }, delayMinutes: 1, logger: mockLogger, config: testConfig }),
+    ).rejects.toThrow('exchange-locked');
+
+    // Orphan channel was closed best-effort.
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+
+    // Next send retries cleanly with a fresh channel.
+    await send({ data: { n: 2 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    expect(mockCreateConfirmChannel).toHaveBeenCalledTimes(2);
+  });
+
+  it('swallows close() errors when cleaning up after assertExchange failure', async () => {
+    // The orphan-cleanup path must not throw if the channel is already broken
+    // and rejects on close — we still want the original assertExchange error
+    // to surface.
+    const closeSpy = vi.fn().mockRejectedValue(new Error('already closed'));
+    const failingChannel = { ...mockChannel, close: closeSpy };
+    mockCreateConfirmChannel.mockImplementationOnce(() => Promise.resolve(failingChannel));
+    mockAssertExchange.mockRejectedValueOnce(new Error('exchange-locked'));
+
+    const { slothDelaySender } = await import('../sender.js');
+    const send = slothDelaySender(mockClient as never);
+
+    await expect(
+      send({ data: { n: 1 }, delayMinutes: 1, logger: mockLogger, config: testConfig }),
+    ).rejects.toThrow('exchange-locked');
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects and clears state when channel dies before assertExchange resolves', async () => {
+    // If error/close fires while assertExchange is in flight, the in-progress
+    // acquire must reject (don't cache a dead channel) and the next send must
+    // start a fresh acquire — otherwise a subsequent caller would either wait
+    // forever or get back a known-dead channel.
+    let resolveAssert: () => void = () => {};
+    const flag = { assertCalled: false };
+    mockAssertExchange.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          flag.assertCalled = true;
+          resolveAssert = () => {
+            resolve();
+          };
+        }),
+    );
+
+    const { slothDelaySender } = await import('../sender.js');
+    const send = slothDelaySender(mockClient as never);
+
+    const p1 = send({ data: { n: 1 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+
+    // Wait until open() has progressed far enough to call assertExchange — that
+    // means createConfirmChannel resolved and the error/close listeners are wired up.
+    while (!flag.assertCalled) await Promise.resolve();
+
+    // Now the channel can be killed and the listener will fire synchronously.
+    mockChannel.emit('close');
+    resolveAssert();
+
+    await expect(p1).rejects.toThrow('closed before publisher was ready');
+
+    // The next send must start a brand-new acquire — not reuse the dead one.
+    mockChannel = buildChannel();
+    mockCreateConfirmChannel.mockImplementationOnce(() => Promise.resolve(mockChannel));
+    await send({ data: { n: 2 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    expect(mockCreateConfirmChannel).toHaveBeenCalledTimes(2);
+  });
+
   it('ignores a stale close event on a channel that was already replaced', async () => {
     // A channel emits 'close' *after* the cache has moved on to a new channel
     // (a race between broker-initiated close and our re-create on error).

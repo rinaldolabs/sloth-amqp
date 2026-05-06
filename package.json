@@ -22,7 +22,7 @@
     "registry": "https://registry.npmjs.org"
   },
   "peerDependencies": {
-    "amqplib": "^0.10.0 || ^1.0.0"
+    "amqplib": "^1.0.0"
   },
   "devDependencies": {
     "@commitlint/cli": "20.5.3",
