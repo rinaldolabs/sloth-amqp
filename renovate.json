@@ -4,7 +4,7 @@
   "rangeStrategy": "bump",
   "semanticCommits": "enabled",
   "semanticCommitType": "chore",
-  "platformAutomerge": true,
+  "platformAutomerge": false,
   "rebaseWhen": "behind-base-branch",
   "prNotPendingHours": 0,
   "minimumReleaseAge": null,
@@ -73,24 +73,21 @@
       "description": "Auto-merge minor/patch for production deps",
       "matchManagers": ["npm"],
       "matchUpdateTypes": ["minor", "patch"],
-      "automerge": true,
-      "automergeType": "pr",
+      "automerge": false,
       "labels": ["deps", "automerge"]
     },
     {
       "description": "Auto-merge all devDependency updates (low risk)",
       "matchManagers": ["npm"],
       "matchDepTypes": ["devDependencies"],
-      "automerge": true,
-      "automergeType": "pr",
+      "automerge": false,
       "labels": ["deps", "automerge"]
     },
     {
       "description": "Auto-merge minor/patch GitHub Actions updates",
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
-      "automerge": true,
-      "automergeType": "pr",
+      "automerge": false,
       "labels": ["deps", "github-actions", "automerge"]
     },
     {
