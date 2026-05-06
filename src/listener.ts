@@ -1,4 +1,5 @@
 import amqp, { type Channel, type ChannelModel } from 'amqplib';
+import { combineAbort, raceWithAbort, safeClose } from './abort.js';
 import { errMessage } from './errors.js';
 import { NoOpLogger, resolveLogger } from './logger.js';
 import type { SlothListenerHandle, SlothListenerOptions } from './types.js';
@@ -16,6 +17,8 @@ export async function setupDelayedMessageListener({
   onMessage,
   queueExpiresMs = defaultListenerQueueExpiresMs,
   logLevel,
+  signal: rawSignal,
+  timeoutMs,
 }: SlothListenerOptions): Promise<SlothListenerHandle> {
   if (!amqpUrl) {
     throw new Error('amqpUrl must not be empty');
@@ -24,6 +27,9 @@ export async function setupDelayedMessageListener({
   if (!Number.isFinite(queueExpiresMs) || queueExpiresMs <= 0) {
     throw new Error('queueExpiresMs must be a positive finite number');
   }
+
+  const signal = combineAbort(rawSignal, timeoutMs);
+  if (signal?.aborted) throw signal.reason as unknown;
 
   const logger = resolveLogger(rawLogger, logLevel);
   logger.debug(`sloth: setting up listener for ${config.serviceName}/${config.routingKey}`);
@@ -51,8 +57,12 @@ export async function setupDelayedMessageListener({
   try {
     const queueName = getSlothQueueName(config);
 
-    connection = await amqp.connect(amqpUrl);
-    channel = await connection.createChannel();
+    // Each network step is raced against the abort signal so a hung broker
+    // (TCP open but no AMQP handshake) can't block setup forever. The
+    // `safeClose` cleanup closes any resource that resolves *after* the
+    // signal fires, so we don't leak sockets/channels in the abort path.
+    connection = await raceWithAbort(amqp.connect(amqpUrl), signal, safeClose);
+    channel = await raceWithAbort(connection.createChannel(), signal, safeClose);
 
     channel.on('error', (err: Error) => {
       logger.error(`sloth: listener channel error: ${err.message}`);
@@ -67,31 +77,40 @@ export async function setupDelayedMessageListener({
 
     // Sloth re-delivers via sloth.headers.exchange.response (headers exchange) —
     // matches goamqp ServiceResponseConsumer in amqp.go
-    await channel.assertExchange(slothResponseExchangeName, 'headers', { durable: true });
-    await channel.assertQueue(queueName, {
-      durable: true,
-      expires: queueExpiresMs,
-    });
+    await raceWithAbort(
+      channel.assertExchange(slothResponseExchangeName, 'headers', { durable: true }),
+      signal,
+    );
+    await raceWithAbort(
+      channel.assertQueue(queueName, { durable: true, expires: queueExpiresMs }),
+      signal,
+    );
     // Bind using headers: Sloth sets service={serviceName} when publishing the response
-    await channel.bindQueue(queueName, slothResponseExchangeName, config.routingKey, {
-      service: config.serviceName,
-    });
+    await raceWithAbort(
+      channel.bindQueue(queueName, slothResponseExchangeName, config.routingKey, {
+        service: config.serviceName,
+      }),
+      signal,
+    );
 
-    const { consumerTag } = await channel.consume(
-      queueName,
-      (message) => {
-        if (!message) return;
-        onMessage(message)
-          .then(() => {
-            channel?.ack(message);
-          })
-          .catch((err: unknown) => {
-            logger.error(`sloth: onMessage handler failed: ${errMessage(err)}`);
-            // requeue=false: rely on a broker-configured DLX for retries.
-            channel?.nack(message, false, false);
-          });
-      },
-      { noAck: false },
+    const { consumerTag } = await raceWithAbort(
+      channel.consume(
+        queueName,
+        (message) => {
+          if (!message) return;
+          onMessage(message)
+            .then(() => {
+              channel?.ack(message);
+            })
+            .catch((err: unknown) => {
+              logger.error(`sloth: onMessage handler failed: ${errMessage(err)}`);
+              // requeue=false: rely on a broker-configured DLX for retries.
+              channel?.nack(message, false, false);
+            });
+        },
+        { noAck: false },
+      ),
+      signal,
     );
 
     logger.info(`sloth: listener ready (queue=${queueName}, consumerTag=${consumerTag})`);

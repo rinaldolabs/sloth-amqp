@@ -27,6 +27,15 @@ export interface SlothListenerOptions {
   queueExpiresMs?: number;
   // Optional minimum level for this library's log calls. Caller's logger is otherwise untouched.
   logLevel?: SlothLogLevel;
+  /**
+   * Optional cancellation. Bounds the listener-setup phase
+   * (connect → assertExchange → assertQueue → bindQueue → consume).
+   * After the handle is returned the signal stops mattering — manage
+   * lifetime via `handle.close()`.
+   */
+  signal?: AbortSignal;
+  /** Convenience timeout for the same setup phase. */
+  timeoutMs?: number;
 }
 
 export interface SlothListenerHandle {
