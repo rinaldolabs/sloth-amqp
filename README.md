@@ -16,6 +16,10 @@ npm install @rinaldolabs/sloth-amqp amqplib
 
 Requires `amqplib` `^1.0.0` as a peer dependency.
 
+The package is **dual-published** as both ESM (`dist/index.js`) and CJS (`dist/index.cjs`) with matching `.d.ts` / `.d.cts` declarations. Node's resolver picks the right format automatically — works out of the box with Node ESM, Vitest, Jest (+ `@swc/jest`), ts-node, Bun, and Deno without any test-runner configuration.
+
+> **Dual-package note.** Avoid mixing ESM `import` and CJS `require` of this package in the same process. The `slothDelaySender` factory caches a `ConfirmChannel` in closure state; loading the package twice (once per format) gives you two independent caches. In practice, apps pick one module system and this is a non-issue.
+
 ## How Sloth works
 
 Sloth is a message delay service. Instead of delivering a message immediately, your service publishes it to Sloth with a `delay-until` timestamp. Sloth holds the message and re-delivers it to your response queue when the time arrives.

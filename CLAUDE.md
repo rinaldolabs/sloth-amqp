@@ -7,7 +7,8 @@ This is a thin, zero-runtime-dependency library. `amqplib` is a **peer dependenc
 ## Commands
 
 ```bash
-npm run build         # tsc → dist/
+npm run build         # tsup → dist/{index.js,index.cjs,index.d.ts,index.d.cts}
+npm run type-check    # tsc --noEmit (esbuild does not type-check)
 npm run test          # vitest --watch
 npm run test-once     # vitest single run
 npm run coverage      # vitest run --coverage (must be 100%)
@@ -17,6 +18,8 @@ npm run lint:lockfile # validate package-lock.json (host/scheme/integrity)
 npm run sbom          # generate sbom.json (CycloneDX)
 npm run test:integration  # vitest against a real RabbitMQ via testcontainers (needs Docker)
 ```
+
+The package is dual-published. `dist/index.js` is ESM, `dist/index.cjs` is CJS, with matching `.d.ts` and `.d.cts`. Node's resolver picks the right format based on the consumer's module system. The package's own source is ESM (`"type": "module"`); tsup handles the CJS rewrite at build time.
 
 Run a single test file or pattern:
 
@@ -68,7 +71,8 @@ These constants are not configurable — they're part of the wire contract with 
 
 - **Coverage 100%** — statements, branches, functions, lines, `perFile`
 - **ESLint 0 warnings/errors** — `npm run lint`
-- **TypeScript 0 errors** — `npm run build`
+- **TypeScript 0 errors** — `npm run type-check`
+- **Build clean** — `npm run build` (tsup emits ESM + CJS + types)
 - **`npm audit --omit=dev --audit-level=high` clean**
 - **`npm run lint:lockfile` clean** — host=npm, scheme=https, integrity required
 
