@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ChannelModel, ConfirmChannel } from 'amqplib';
 import { errMessage } from './errors.js';
 import { resolveLogger } from './logger.js';
@@ -6,6 +7,26 @@ import { assertSafeSlothConfig, getSlothTarget, slothRequestExchangeName } from 
 
 /** ~100 years in seconds — prevents unix timestamp overflow in the delay-until header. */
 export const MAX_DELAY_SECONDS = 100 * 365 * 24 * 3600;
+
+/**
+ * Headers reserved by the Sloth wire protocol. Callers cannot override these
+ * via `params.headers`; passing them throws before any AMQP work happens.
+ */
+const RESERVED_HEADERS: ReadonlySet<string> = new Set(['delay-until', 'target']);
+
+const mergeReservedHeaders = (
+  headers: Record<string, string | number | boolean> | undefined,
+): Record<string, string | number | boolean> => {
+  if (!headers) return {};
+  for (const key of Object.keys(headers)) {
+    if (RESERVED_HEADERS.has(key)) {
+      throw new Error(
+        `headers.${key} is reserved by the Sloth wire protocol and cannot be overridden`,
+      );
+    }
+  }
+  return headers;
+};
 
 /**
  * Strips control and newline-like characters and truncates to 200 grapheme clusters
@@ -169,12 +190,35 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
 
     const label = logLabel !== undefined ? sanitizeLabel(logLabel) : 'message';
     const { delayUntilUnix, delayDesc, pastDateWarning } = resolveDelaySeconds(params);
-    if (pastDateWarning !== undefined) logger.warn(`sloth: ${pastDateWarning}`);
+    if (pastDateWarning !== undefined) {
+      logger.warn(`sloth: ${pastDateWarning}`, {
+        event: 'sloth.publish.past_date_warning',
+        serviceName: config.serviceName,
+        routingKey: config.routingKey,
+      });
+    }
     const body = serializeData(data);
 
-    logger.debug(
-      `sloth: scheduling ${label} for ${config.serviceName}/${config.routingKey} (${delayDesc})`,
-    );
+    // Auto-generate a message ID per send unless caller provided one. UUIDs
+    // give consumers a free idempotency key without us implementing dedup.
+    const messageId = params.messageId ?? randomUUID();
+    const extraHeaders = mergeReservedHeaders(params.headers);
+    const headers = {
+      ...extraHeaders,
+      // Reserved Sloth wire-protocol headers — written last so callers cannot
+      // override them via params.headers (also enforced by mergeReservedHeaders).
+      'delay-until': delayUntilUnix, // seconds — Sloth parses as int64 Unix timestamp
+      target: getSlothTarget(config), // amqp://{serviceName}/{routingKey}
+    };
+
+    logger.debug(`sloth: scheduling ${label}`, {
+      event: 'sloth.publish.scheduling',
+      serviceName: config.serviceName,
+      routingKey: config.routingKey,
+      messageId,
+      correlationId: params.correlationId,
+      delayDesc,
+    });
 
     const startTime = Date.now();
     try {
@@ -188,26 +232,45 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
           'delay',
           body,
           {
-            headers: {
-              'delay-until': delayUntilUnix, // seconds — Sloth parses as int64 Unix timestamp
-              target: getSlothTarget(config), // amqp://{serviceName}/{routingKey}
-            },
+            messageId,
+            ...(params.correlationId !== undefined && { correlationId: params.correlationId }),
+            headers,
           },
           (err) => {
             if (err) reject(err instanceof Error ? err : new Error(errMessage(err)));
             else resolve();
           },
         );
-        if (!ok) logger.warn('sloth: publish back-pressured (channel write buffer full)');
+        if (!ok) {
+          logger.warn('sloth: publish back-pressured (channel write buffer full)', {
+            event: 'sloth.publish.back_pressured',
+            serviceName: config.serviceName,
+            routingKey: config.routingKey,
+            messageId,
+          });
+        }
       });
 
-      logger.info(
-        `sloth: scheduled ${label} (${delayDesc}, took=${String(Date.now() - startTime)}ms)`,
-      );
+      logger.info(`sloth: scheduled ${label}`, {
+        event: 'sloth.publish.confirmed',
+        serviceName: config.serviceName,
+        routingKey: config.routingKey,
+        messageId,
+        correlationId: params.correlationId,
+        delayDesc,
+        durationMs: Date.now() - startTime,
+      });
     } catch (error) {
-      logger.error(
-        `sloth: failed to schedule ${label} after ${String(Date.now() - startTime)}ms: ${errMessage(error)}`,
-      );
+      logger.error(`sloth: failed to schedule ${label}`, {
+        event: 'sloth.publish.failed',
+        serviceName: config.serviceName,
+        routingKey: config.routingKey,
+        messageId,
+        correlationId: params.correlationId,
+        delayDesc,
+        durationMs: Date.now() - startTime,
+        reason: errMessage(error),
+      });
       throw error;
     }
   };

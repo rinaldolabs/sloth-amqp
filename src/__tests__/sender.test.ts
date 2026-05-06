@@ -377,7 +377,10 @@ describe('createDelaySender', () => {
       logger: mockLogger,
       config: testConfig,
     });
-    expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('past'));
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('past'),
+      expect.objectContaining({ event: 'sloth.publish.past_date_warning' }),
+    );
     expect(mockPublish).toHaveBeenCalled();
   });
 
@@ -410,7 +413,10 @@ describe('createDelaySender', () => {
         config: testConfig,
       }),
     ).rejects.toThrow('broker nacked');
-    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('failed to schedule'));
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('failed to schedule'),
+      expect.objectContaining({ event: 'sloth.publish.failed' }),
+    );
   });
 
   it('wraps a non-Error broker reject value in an Error', async () => {
@@ -487,7 +493,10 @@ describe('createDelaySender', () => {
       logger: mockLogger,
       config: testConfig,
     });
-    expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('back-pressured'));
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('back-pressured'),
+      expect.objectContaining({ event: 'sloth.publish.back_pressured' }),
+    );
   });
 
   it('suppresses debug and info logs when logLevel is error', async () => {
@@ -512,7 +521,10 @@ describe('createDelaySender', () => {
       config: testConfig,
       logLabel: 'reminder',
     });
-    expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('reminder'));
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.stringContaining('reminder'),
+      expect.objectContaining({ event: 'sloth.publish.confirmed' }),
+    );
   });
 
   it('reuses the same channel and asserts the exchange only once across calls', async () => {
@@ -683,5 +695,108 @@ describe('createDelaySender', () => {
     // Only two channels created total; the stale event was ignored
     expect(mockCreateConfirmChannel).toHaveBeenCalledTimes(2);
     expect(mockPublish).toHaveBeenCalledTimes(3);
+  });
+
+  it('auto-generates a UUID messageId when caller does not provide one', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    await createDelaySender(mockClient as never).send({
+      data: { n: 1 },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+    });
+
+    const opts = mockPublish.mock.calls[0]?.[3] as { messageId?: string };
+    expect(opts.messageId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it('uses caller-supplied messageId verbatim', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    await createDelaySender(mockClient as never).send({
+      data: { n: 1 },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+      messageId: 'custom-id-123',
+    });
+
+    const opts = mockPublish.mock.calls[0]?.[3] as { messageId: string };
+    expect(opts.messageId).toBe('custom-id-123');
+  });
+
+  it('forwards correlationId on the AMQP basic properties when provided', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    await createDelaySender(mockClient as never).send({
+      data: { n: 1 },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+      correlationId: 'corr-abc',
+    });
+
+    const opts = mockPublish.mock.calls[0]?.[3] as { correlationId?: string };
+    expect(opts.correlationId).toBe('corr-abc');
+  });
+
+  it('omits correlationId from publish options when not provided', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    await createDelaySender(mockClient as never).send({
+      data: { n: 1 },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+    });
+
+    const opts = mockPublish.mock.calls[0]?.[3] as Record<string, unknown>;
+    expect('correlationId' in opts).toBe(false);
+  });
+
+  it('merges caller-supplied headers (e.g. W3C traceparent) onto the message', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    await createDelaySender(mockClient as never).send({
+      data: { n: 1 },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+      headers: {
+        traceparent: '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01',
+        tracestate: 'congo=t61rcWkgMzE',
+      },
+    });
+
+    const opts = mockPublish.mock.calls[0]?.[3] as { headers: Record<string, unknown> };
+    expect(opts.headers['traceparent']).toBe('00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01');
+    expect(opts.headers['tracestate']).toBe('congo=t61rcWkgMzE');
+    // Reserved headers still present and not overwritten.
+    expect(opts.headers['delay-until']).toBe(FIXED_NOW_SEC + 60);
+    expect(opts.headers['target']).toBe('amqp://test-service/test.key');
+  });
+
+  it('throws when caller-supplied headers include the reserved delay-until key', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    await expect(
+      createDelaySender(mockClient as never).send({
+        data: { n: 1 },
+        delayMinutes: 1,
+        logger: mockLogger,
+        config: testConfig,
+        headers: { 'delay-until': 999 },
+      }),
+    ).rejects.toThrow('headers.delay-until is reserved');
+    expect(mockPublish).not.toHaveBeenCalled();
+  });
+
+  it('throws when caller-supplied headers include the reserved target key', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    await expect(
+      createDelaySender(mockClient as never).send({
+        data: { n: 1 },
+        delayMinutes: 1,
+        logger: mockLogger,
+        config: testConfig,
+        headers: { target: 'amqp://evil/path' },
+      }),
+    ).rejects.toThrow('headers.target is reserved');
+    expect(mockPublish).not.toHaveBeenCalled();
   });
 });
