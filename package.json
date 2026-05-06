@@ -28,16 +28,19 @@
   },
   "publishConfig": {
     "access": "public",
-    "registry": "https://registry.npmjs.org"
+    "registry": "https://registry.npmjs.org",
+    "provenance": true
   },
   "peerDependencies": {
     "amqplib": "^1.0.0"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "0.18.2",
     "@commitlint/cli": "20.5.3",
     "@commitlint/config-conventional": "20.5.3",
     "@cyclonedx/cyclonedx-npm": "4.2.1",
     "@eslint/js": "^10.0.1",
+    "@size-limit/preset-small-lib": "^12.1.0",
     "@types/amqplib": "0.10.8",
     "@vitest/coverage-v8": "4.1.5",
     "amqplib": "1.0.3",
@@ -48,6 +51,8 @@
     "lint-staged": "16.4.0",
     "lockfile-lint": "5.0.0",
     "prettier": "3.8.3",
+    "publint": "^0.3.19",
+    "size-limit": "^12.1.0",
     "testcontainers": "^11.14.0",
     "tsup": "^8.5.1",
     "typescript": "6.0.3",
@@ -64,9 +69,12 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "lint:lockfile": "lockfile-lint",
+    "lint:packaging": "publint && attw --pack",
+    "size": "size-limit",
+    "size:why": "size-limit --why",
     "sbom": "cyclonedx-npm --output-file sbom.json",
     "prepare": "husky",
-    "prepublishOnly": "npm run lint && npm run type-check && npm run build && npm run coverage"
+    "prepublishOnly": "npm run lint && npm run type-check && npm run build && npm run lint:packaging && npm run size && npm run coverage"
   },
   "keywords": [
     "amqp",
@@ -79,7 +87,7 @@
   "homepage": "https://github.com/rinaldolabs/sloth-amqp",
   "repository": {
     "type": "git",
-    "url": "https://github.com/rinaldolabs/sloth-amqp.git"
+    "url": "git+https://github.com/rinaldolabs/sloth-amqp.git"
   },
   "bugs": {
     "url": "https://github.com/rinaldolabs/sloth-amqp/issues"

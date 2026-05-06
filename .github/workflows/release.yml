@@ -44,11 +44,16 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run lint:lockfile
-      - run: npm run coverage
+      - run: npm run type-check
       - run: npm run build
+      - name: Validate published shape (publint + attw)
+        run: npm run lint:packaging
+      - name: Enforce size budget
+        run: npm run size
+      - run: npm run coverage
       - name: Generate SBOM
         run: npm run sbom
-      - name: Publish to npm
+      - name: Publish to npm with Sigstore provenance
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
