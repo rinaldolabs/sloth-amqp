@@ -1,6 +1,6 @@
 # @rinaldolabs/sloth-amqp
 
-Node.js TypeScript client for the [Sloth](https://gitlab.com/unboundsoftware/sloth) delayed-message AMQP service. Wire-compatible with Sloth `amqp:0.0.10`.
+Node.js TypeScript client for the [Sloth](https://gitlab.com/unboundsoftware/sloth) delayed-message AMQP service. Wire-compatible with the Sloth [`amqp` source plugin](https://gitlab.com/unboundsoftware/sloth/amqp).
 
 This is a thin, zero-runtime-dependency library. `amqplib` is a **peer dependency** — consumers provide it themselves.
 
@@ -78,7 +78,9 @@ These constants are not configurable — they're part of the wire contract with 
 - No stack traces in error messages or logs — use `errMessage()` from `src/errors.ts`
 - No `any`, no type assertions (`as`) — only exception is test mocks casting to `never` for opaque amqplib internals
 - `serviceName` and `routingKey` are validated against `[A-Za-z0-9._-]+` (`assertSafeSlothConfig`) before flowing into AMQP routing strings
-- `delayMinutes` must be positive and finite
+- Exactly one of `delayMinutes` / `delaySeconds` / `delayUntil` must be provided per send. `delayMinutes` and `delaySeconds` must be positive and finite; `delayUntil` must be a valid `Date`. All variants are capped at `MAX_DELAY_SECONDS` (~100 years) to prevent unix-timestamp overflow
+- `logLabel` is sanitized via `sanitizeLabel` (strips ASCII controls, NEL, U+2028, U+2029; truncated to 200 grapheme clusters) before being written to log lines
+- `data` is JSON-serialized once via `serializeData` before the channel opens; non-serializable values throw before any AMQP work
 - All cleanup/error paths route through the injected `SlothLogger`, never `console`
 
 ## Dependency policy
@@ -96,10 +98,11 @@ Anything exported from `src/index.ts` is part of the published API. Treat change
 - `slothConnect`, `slothClose`
 - `slothDelaySender` — generic over payload type `<TData>`
 - `setupDelayedMessageListener` — returns `SlothListenerHandle { consumerTag, close() }`
-- `SlothLogger`, `NoOpLogger`, `withLogLevel`, `SlothLogLevel`
+- `MAX_DELAY_SECONDS`, `resolveDelayUnixSeconds`, `sanitizeLabel`, `serializeData` — pure helpers exposed for callers that want to validate input ahead of `send`
+- `NoOpLogger`, `withLogLevel`
 - `SlothConfig`, `assertSafeSlothConfig`, `getSlothQueueName`, `getSlothTarget`
 - `slothRequestExchangeName`, `slothResponseExchangeName`, `defaultListenerQueueExpiresMs`
-- Types: `SendDelayMessageParams<TData>`, `SlothListenerOptions`, `SlothListenerHandle`, `SlothSetup`
+- Types: `SlothLogger`, `SlothLogLevel`, `DelaySpec`, `SendDelayMessageParams<TData>`, `SlothListenerOptions`, `SlothListenerHandle`, `SlothSetup`
 
 ## Resource hygiene
 

@@ -6,7 +6,7 @@
 
 Node.js TypeScript client for [Sloth](https://gitlab.com/unboundsoftware/sloth) — a delayed-message delivery service over AMQP/RabbitMQ.
 
-This package is the TypeScript counterpart to `gitlab.com/unboundsoftware/sloth/client-amqp` and is wire-compatible with Sloth `amqp:0.0.10`. It complements [@opzkit/nodeamqp](https://www.npmjs.com/package/@opzkit/nodeamqp), which handles event streams and request/response patterns.
+This package is the TypeScript counterpart to [`gitlab.com/unboundsoftware/sloth/client-amqp`](https://gitlab.com/unboundsoftware/sloth/client-amqp) and implements the wire format defined by the Sloth [`amqp` source plugin](https://gitlab.com/unboundsoftware/sloth/amqp). It complements [@opzkit/nodeamqp](https://www.npmjs.com/package/@opzkit/nodeamqp), which handles event streams and request/response patterns.
 
 ## Installation
 
@@ -54,6 +54,23 @@ await send({
   logger: myLogger,
 });
 ```
+
+Each call must specify **exactly one** of three delay variants:
+
+```ts
+await send({ data, config, logger, delayMinutes: 30 });
+await send({ data, config, logger, delaySeconds: 90 });
+await send({ data, config, logger, delayUntil: new Date('2030-01-01T00:00:00Z') });
+```
+
+Optional fields on every variant:
+
+| Field      | Type           | Notes                                                                                                                  |
+| ---------- | -------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `logLabel` | `string`       | Human-readable identifier used in log lines. Sanitized (control chars stripped, capped at 200 grapheme clusters). |
+| `logLevel` | `SlothLogLevel` | Minimum level for **this library's** log calls. The caller's logger is otherwise unchanged.                            |
+
+All variants are validated before any AMQP work happens: positive and finite numbers, valid `Date`, capped at ~100 years (`MAX_DELAY_SECONDS`). A `delayUntil` in the past is logged as a warning and still published — Sloth will deliver immediately, matching the upstream Go client's behavior.
 
 ### Listening for delivered messages
 
@@ -105,20 +122,52 @@ const client = await slothConnect(process.env.AMQP_URL, async (conn) => {
 });
 ```
 
-## Protocol constants
+## Public exports
+
+Everything below is re-exported from the package root.
+
+### Protocol constants and helpers
 
 ```ts
 import {
-  slothRequestExchangeName, // "sloth.direct.exchange.request"
-  slothResponseExchangeName, // "sloth.headers.exchange.response"
-  getSlothQueueName, // (config) => "sloth.headers.exchange.response.queue.<serviceName>"
-  getSlothTarget, // (config) => "amqp://<serviceName>/<routingKey>"
+  slothRequestExchangeName,        // "sloth.direct.exchange.request"
+  slothResponseExchangeName,       // "sloth.headers.exchange.response"
+  defaultListenerQueueExpiresMs,   // 5 days, in ms
+  getSlothQueueName,               // (config) => "sloth.headers.exchange.response.queue.<serviceName>"
+  getSlothTarget,                  // (config) => "amqp://<serviceName>/<routingKey>"
+  assertSafeSlothConfig,           // throws if serviceName/routingKey contain unsafe chars
+} from '@rinaldolabs/sloth-amqp';
+```
+
+### Pure helpers (re-exported for callers that want to validate ahead of `send`)
+
+```ts
+import {
+  MAX_DELAY_SECONDS,        // ~100 years in seconds
+  resolveDelayUnixSeconds,  // (DelaySpec) => { delayUntilUnix, delayDesc, pastDateWarning? }
+  sanitizeLabel,            // (raw) => safe single-line string, max 200 grapheme clusters
+  serializeData,            // (data) => Buffer; throws on non-JSON-serializable input
+} from '@rinaldolabs/sloth-amqp';
+```
+
+### Types
+
+```ts
+import type {
+  SlothConfig,
+  SlothLogger,
+  SlothLogLevel,
+  SlothSetup,
+  SlothListenerOptions,
+  SlothListenerHandle,
+  SendDelayMessageParams,
+  DelaySpec,
 } from '@rinaldolabs/sloth-amqp';
 ```
 
 ## Wire compatibility
 
-Implements the Sloth AMQP protocol as defined in [gitlab.com/unboundsoftware/sloth/amqp](https://gitlab.com/unboundsoftware/sloth/amqp) (compatible with `amqp:0.0.10`).
+Implements the Sloth AMQP protocol as defined by the upstream [`amqp` source plugin](https://gitlab.com/unboundsoftware/sloth/amqp). The wire format — exchange names, routing keys, header names and types, queue naming — is treated as a fixed contract and verified by `test/integration/wire-protocol.test.ts` against a real RabbitMQ container.
 
 Headers sent with each delayed message:
 
