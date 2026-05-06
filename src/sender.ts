@@ -25,11 +25,12 @@ export const sanitizeLabel = (raw: string): string =>
     .join('');
 
 /**
- * Resolves whichever delay variant is set into an absolute unix timestamp (seconds)
- * and a human-readable description for log lines.
- * Throws on invalid input or out-of-range values. Past delayUntil dates return a pastDateWarning instead of throwing.
+ * Resolves whichever delay variant is set into an absolute unix timestamp
+ * (seconds since epoch) and a human-readable description for log lines.
+ * Throws on invalid input or out-of-range values. Past delayUntil dates
+ * return a pastDateWarning instead of throwing.
  */
-export const resolveDelayUnixSeconds = (
+export const resolveDelaySeconds = (
   params: DelaySpec,
 ): { delayUntilUnix: number; delayDesc: string; pastDateWarning?: string } => {
   const { delayUntil, delaySeconds, delayMinutes } = params;
@@ -84,20 +85,28 @@ export const serializeData = (data: unknown): Buffer => {
 };
 
 /**
- * Returns a `send` function that publishes delayed messages over Sloth.
+ * The object returned by {@link createDelaySender}. Exposes a single `send`
+ * method today; returning an object (rather than a bare function) leaves room
+ * for future methods like `sendBatch` without another breaking change, and
+ * avoids the `getSender()(params)` smell at consumer wrappers.
+ */
+export interface DelaySender {
+  send<TData>(params: SendDelayMessageParams<TData>): Promise<void>;
+}
+
+/**
+ * Creates a delayed-message sender bound to the given `ChannelModel`.
  *
  * Internally caches a single confirm channel for the lifetime of the returned
- * function (matching the Go client's shared-publisher model). The exchange is
+ * sender (matching the Go client's shared-publisher model). The exchange is
  * asserted once on the first publish. If the channel emits `error` or `close`,
  * the cache is dropped and the next call re-creates it transparently.
  *
- * Uses `createConfirmChannel` so each publish awaits a broker ack — a `publish`
+ * Uses `createConfirmChannel` so each publish awaits a broker ack — a `send`
  * that resolves means the broker has accepted the message, not just that it
- * was written to the local socket. A nack from the broker rejects the publish.
+ * was written to the local socket. A nack from the broker rejects the promise.
  */
-export const slothDelaySender = (
-  client: ChannelModel,
-): (<TData>(params: SendDelayMessageParams<TData>) => Promise<void>) => {
+export const createDelaySender = (client: ChannelModel): DelaySender => {
   let cached: ConfirmChannel | null = null;
   // Single in-flight lock so concurrent send() calls share one channel-creation
   // path instead of each opening their own (which would leak all but the last).
@@ -153,13 +162,13 @@ export const slothDelaySender = (
     return inFlight;
   };
 
-  return async <TData>(params: SendDelayMessageParams<TData>): Promise<void> => {
+  const send = async <TData>(params: SendDelayMessageParams<TData>): Promise<void> => {
     const { data, logger: rawLogger, config, logLabel, logLevel } = params;
     const logger = resolveLogger(rawLogger, logLevel);
     assertSafeSlothConfig(config);
 
     const label = logLabel !== undefined ? sanitizeLabel(logLabel) : 'message';
-    const { delayUntilUnix, delayDesc, pastDateWarning } = resolveDelayUnixSeconds(params);
+    const { delayUntilUnix, delayDesc, pastDateWarning } = resolveDelaySeconds(params);
     if (pastDateWarning !== undefined) logger.warn(`sloth: ${pastDateWarning}`);
     const body = serializeData(data);
 
@@ -202,4 +211,6 @@ export const slothDelaySender = (
       throw error;
     }
   };
+
+  return { send };
 };
