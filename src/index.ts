@@ -1,6 +1,8 @@
 export { slothClose, slothConnect } from './connection.js';
 export type { SlothConnectOptions } from './connection.js';
 export { setupDelayedMessageListener } from './listener.js';
+export { ping } from './ping.js';
+export type { PingOptions } from './ping.js';
 export { consoleLogger, NoOpLogger, withLogLevel } from './logger.js';
 export type { SlothLogger, SlothLogLevel } from './logger.js';
 export {
