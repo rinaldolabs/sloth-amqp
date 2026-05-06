@@ -237,16 +237,39 @@ describe('serializeData', () => {
 
 // ─── slothDelaySender (AMQP I/O layer) ───────────────────────────────────────
 
-const mockChannelClose = vi.fn().mockResolvedValue(undefined);
-const mockPublish = vi.fn().mockReturnValue(true);
+type PublishCallback = (err: Error | null) => void;
+
+interface MockConfirmChannel {
+  assertExchange: ReturnType<typeof vi.fn>;
+  publish: ReturnType<typeof vi.fn>;
+  on: (event: string, listener: () => void) => MockConfirmChannel;
+  emit: (event: string) => void;
+}
+
+const mockPublish = vi.fn();
 const mockAssertExchange = vi.fn().mockResolvedValue(undefined);
-const mockChannel = {
-  assertExchange: mockAssertExchange,
-  publish: mockPublish,
-  close: mockChannelClose,
+
+const buildChannel = (): MockConfirmChannel => {
+  const localHandlers = new Map<string, Array<() => void>>();
+  const chan: MockConfirmChannel = {
+    assertExchange: mockAssertExchange,
+    publish: mockPublish,
+    on: (event, listener) => {
+      const list = localHandlers.get(event) ?? [];
+      list.push(listener);
+      localHandlers.set(event, list);
+      return chan;
+    },
+    emit: (event) => {
+      for (const fn of localHandlers.get(event) ?? []) fn();
+    },
+  };
+  return chan;
 };
-const mockCreateChannel = vi.fn().mockResolvedValue(mockChannel);
-const mockClient = { createChannel: mockCreateChannel };
+
+let mockChannel: MockConfirmChannel = buildChannel();
+const mockCreateConfirmChannel = vi.fn().mockImplementation(() => Promise.resolve(mockChannel));
+const mockClient = { createConfirmChannel: mockCreateConfirmChannel };
 
 const mockLogger: SlothLogger = {
   info: vi.fn(),
@@ -256,13 +279,27 @@ const mockLogger: SlothLogger = {
   child: vi.fn().mockReturnThis(),
 };
 
+// Default publish: synchronously invoke the broker-confirm callback with success.
+// Tests can override per-call via mockPublish.mockImplementationOnce(...).
+const defaultPublishImpl = (
+  _ex: string,
+  _rk: string,
+  _body: Buffer,
+  _opts: unknown,
+  cb: PublishCallback,
+): boolean => {
+  cb(null);
+  return true;
+};
+
 describe('slothDelaySender', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     vi.setSystemTime(FIXED_NOW_MS);
-    mockCreateChannel.mockResolvedValue(mockChannel);
-    mockChannelClose.mockResolvedValue(undefined);
+    mockChannel = buildChannel();
+    mockCreateConfirmChannel.mockImplementation(() => Promise.resolve(mockChannel));
+    mockPublish.mockImplementation(defaultPublishImpl);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -292,8 +329,8 @@ describe('slothDelaySender', () => {
           target: 'amqp://test-service/test.key',
         }),
       }),
+      expect.any(Function),
     );
-    expect(mockChannelClose).toHaveBeenCalled();
   });
 
   it('publishes correct delay-until when using delaySeconds', async () => {
@@ -344,7 +381,7 @@ describe('slothDelaySender', () => {
     expect(mockPublish).toHaveBeenCalled();
   });
 
-  it('closes channel even when publish throws', async () => {
+  it('rejects when assertExchange throws on first call', async () => {
     const { slothDelaySender } = await import('../sender.js');
     mockAssertExchange.mockRejectedValueOnce(new Error('exchange error'));
     await expect(
@@ -355,19 +392,44 @@ describe('slothDelaySender', () => {
         config: testConfig,
       }),
     ).rejects.toThrow('exchange error');
-    expect(mockChannelClose).toHaveBeenCalled();
   });
 
-  it('logs warn when channel close fails in finally', async () => {
+  it('rejects when broker nacks the publish (callback err)', async () => {
     const { slothDelaySender } = await import('../sender.js');
-    mockChannelClose.mockRejectedValueOnce(new Error('close failed'));
-    await slothDelaySender(mockClient as never)({
-      data: { key: 'test' },
-      delayMinutes: 1,
-      logger: mockLogger,
-      config: testConfig,
-    });
-    expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('failed to close'));
+    mockPublish.mockImplementationOnce(
+      (_ex: string, _rk: string, _body: Buffer, _opts: unknown, cb: PublishCallback): boolean => {
+        cb(new Error('broker nacked'));
+        return true;
+      },
+    );
+    await expect(
+      slothDelaySender(mockClient as never)({
+        data: { key: 'test' },
+        delayMinutes: 1,
+        logger: mockLogger,
+        config: testConfig,
+      }),
+    ).rejects.toThrow('broker nacked');
+    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('failed to schedule'));
+  });
+
+  it('wraps a non-Error broker reject value in an Error', async () => {
+    const { slothDelaySender } = await import('../sender.js');
+    mockPublish.mockImplementationOnce(
+      (_ex: string, _rk: string, _body: Buffer, _opts: unknown, cb: PublishCallback): boolean => {
+        // amqplib's callback is typed `(err: any) => void`; some transports surface a plain string
+        (cb as (err: unknown) => void)('broker timeout');
+        return true;
+      },
+    );
+    await expect(
+      slothDelaySender(mockClient as never)({
+        data: { key: 'test' },
+        delayMinutes: 1,
+        logger: mockLogger,
+        config: testConfig,
+      }),
+    ).rejects.toThrow('broker timeout');
   });
 
   it('throws without opening a channel when data is not JSON-serializable', async () => {
@@ -382,7 +444,7 @@ describe('slothDelaySender', () => {
         config: testConfig,
       }),
     ).rejects.toThrow('not JSON-serializable');
-    expect(mockCreateChannel).not.toHaveBeenCalled();
+    expect(mockCreateConfirmChannel).not.toHaveBeenCalled();
   });
 
   it('throws without opening a channel when config is invalid', async () => {
@@ -395,12 +457,12 @@ describe('slothDelaySender', () => {
         config: { serviceName: 'bad/name', routingKey: 'k' },
       }),
     ).rejects.toThrow('serviceName');
-    expect(mockCreateChannel).not.toHaveBeenCalled();
+    expect(mockCreateConfirmChannel).not.toHaveBeenCalled();
   });
 
-  it('throws without opening a channel when createChannel fails', async () => {
+  it('throws when createConfirmChannel fails', async () => {
     const { slothDelaySender } = await import('../sender.js');
-    mockCreateChannel.mockRejectedValueOnce(new Error('no channel'));
+    mockCreateConfirmChannel.mockRejectedValueOnce(new Error('no channel'));
     await expect(
       slothDelaySender(mockClient as never)({
         data: { key: 'test' },
@@ -409,12 +471,16 @@ describe('slothDelaySender', () => {
         config: testConfig,
       }),
     ).rejects.toThrow('no channel');
-    expect(mockChannelClose).not.toHaveBeenCalled();
   });
 
-  it('warns when publish returns false (back-pressure)', async () => {
+  it('warns when publish returns false (back-pressure) but still resolves on broker ack', async () => {
     const { slothDelaySender } = await import('../sender.js');
-    mockPublish.mockReturnValueOnce(false);
+    mockPublish.mockImplementationOnce(
+      (_ex: string, _rk: string, _body: Buffer, _opts: unknown, cb: PublishCallback): boolean => {
+        cb(null);
+        return false;
+      },
+    );
     await slothDelaySender(mockClient as never)({
       data: { key: 'test' },
       delayMinutes: 1,
@@ -447,5 +513,70 @@ describe('slothDelaySender', () => {
       logLabel: 'reminder',
     });
     expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('reminder'));
+  });
+
+  it('reuses the same channel and asserts the exchange only once across calls', async () => {
+    const { slothDelaySender } = await import('../sender.js');
+    const send = slothDelaySender(mockClient as never);
+    await send({ data: { n: 1 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    await send({ data: { n: 2 }, delayMinutes: 2, logger: mockLogger, config: testConfig });
+    await send({ data: { n: 3 }, delayMinutes: 3, logger: mockLogger, config: testConfig });
+
+    expect(mockCreateConfirmChannel).toHaveBeenCalledTimes(1);
+    expect(mockAssertExchange).toHaveBeenCalledTimes(1);
+    expect(mockPublish).toHaveBeenCalledTimes(3);
+  });
+
+  it('re-creates the channel after a channel close event', async () => {
+    const { slothDelaySender } = await import('../sender.js');
+    const send = slothDelaySender(mockClient as never);
+    await send({ data: { n: 1 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+
+    // Broker closes the first channel; next send must open a new one and re-assert.
+    mockChannel.emit('close');
+    mockChannel = buildChannel();
+    mockCreateConfirmChannel.mockImplementationOnce(() => Promise.resolve(mockChannel));
+
+    await send({ data: { n: 2 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    expect(mockCreateConfirmChannel).toHaveBeenCalledTimes(2);
+    expect(mockAssertExchange).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-creates the channel after a channel error event', async () => {
+    const { slothDelaySender } = await import('../sender.js');
+    const send = slothDelaySender(mockClient as never);
+    await send({ data: { n: 1 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+
+    mockChannel.emit('error');
+    mockChannel = buildChannel();
+    mockCreateConfirmChannel.mockImplementationOnce(() => Promise.resolve(mockChannel));
+
+    await send({ data: { n: 2 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    expect(mockCreateConfirmChannel).toHaveBeenCalledTimes(2);
+    expect(mockAssertExchange).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores a stale close event on a channel that was already replaced', async () => {
+    // A channel emits 'close' *after* the cache has moved on to a new channel
+    // (a race between broker-initiated close and our re-create on error).
+    // The `cached === chan` guard must keep the new channel intact.
+    const { slothDelaySender } = await import('../sender.js');
+    const send = slothDelaySender(mockClient as never);
+    await send({ data: { n: 1 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    const oldChannel = mockChannel;
+
+    // Force a swap to a new channel
+    mockChannel.emit('error');
+    mockChannel = buildChannel();
+    mockCreateConfirmChannel.mockImplementationOnce(() => Promise.resolve(mockChannel));
+    await send({ data: { n: 2 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+
+    // Now the *old* channel finally fires close — must not invalidate the new one
+    oldChannel.emit('close');
+    await send({ data: { n: 3 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+
+    // Only two channels created total; the stale event was ignored
+    expect(mockCreateConfirmChannel).toHaveBeenCalledTimes(2);
+    expect(mockPublish).toHaveBeenCalledTimes(3);
   });
 });

@@ -1,4 +1,4 @@
-import type { Channel, ChannelModel } from 'amqplib';
+import type { ChannelModel, ConfirmChannel } from 'amqplib';
 import { errMessage } from './errors.js';
 import { resolveLogger } from './logger.js';
 import type { DelaySpec, SendDelayMessageParams } from './types.js';
@@ -83,9 +83,38 @@ export const serializeData = (data: unknown): Buffer => {
   }
 };
 
-export const slothDelaySender =
-  (client: ChannelModel) =>
-  async <TData>(params: SendDelayMessageParams<TData>): Promise<void> => {
+/**
+ * Returns a `send` function that publishes delayed messages over Sloth.
+ *
+ * Internally caches a single confirm channel for the lifetime of the returned
+ * function (matching the Go client's shared-publisher model). The exchange is
+ * asserted once on the first publish. If the channel emits `error` or `close`,
+ * the cache is dropped and the next call re-creates it transparently.
+ *
+ * Uses `createConfirmChannel` so each publish awaits a broker ack — a `publish`
+ * that resolves means the broker has accepted the message, not just that it
+ * was written to the local socket. A nack from the broker rejects the publish.
+ */
+export const slothDelaySender = (
+  client: ChannelModel,
+): (<TData>(params: SendDelayMessageParams<TData>) => Promise<void>) => {
+  let cached: ConfirmChannel | null = null;
+
+  const acquire = async (): Promise<ConfirmChannel> => {
+    if (cached) return cached;
+    const chan = await client.createConfirmChannel();
+    const invalidate = (): void => {
+      if (cached === chan) cached = null;
+    };
+    chan.on('error', invalidate);
+    chan.on('close', invalidate);
+    // Routing key "delay" matches goamqp ServiceRequestConsumer("delay", ...) in amqp.go.
+    await chan.assertExchange(slothRequestExchangeName, 'direct', { durable: true });
+    cached = chan;
+    return chan;
+  };
+
+  return async <TData>(params: SendDelayMessageParams<TData>): Promise<void> => {
     const { data, logger: rawLogger, config, logLabel, logLevel } = params;
     const logger = resolveLogger(rawLogger, logLevel);
     assertSafeSlothConfig(config);
@@ -99,22 +128,30 @@ export const slothDelaySender =
       `sloth: scheduling ${label} for ${config.serviceName}/${config.routingKey} (${delayDesc})`,
     );
 
-    let chan: Channel | null = null;
     const startTime = Date.now();
-
     try {
-      chan = await client.createChannel();
-
-      // assertExchange per send is acceptable — this is not a hot path.
-      // Routing key "delay" matches goamqp ServiceRequestConsumer("delay", ...) in amqp.go.
-      await chan.assertExchange(slothRequestExchangeName, 'direct', { durable: true });
-      const ok = chan.publish(slothRequestExchangeName, 'delay', body, {
-        headers: {
-          'delay-until': delayUntilUnix, // seconds — Sloth parses as int64 Unix timestamp
-          target: getSlothTarget(config), // amqp://{serviceName}/{routingKey}
-        },
+      const chan = await acquire();
+      // ConfirmChannel.publish takes a callback that fires on broker ack/nack.
+      // Wrapping it in a Promise turns the callback into the resolution signal:
+      // resolve = broker accepted, reject = broker nacked or channel error.
+      await new Promise<void>((resolve, reject) => {
+        const ok = chan.publish(
+          slothRequestExchangeName,
+          'delay',
+          body,
+          {
+            headers: {
+              'delay-until': delayUntilUnix, // seconds — Sloth parses as int64 Unix timestamp
+              target: getSlothTarget(config), // amqp://{serviceName}/{routingKey}
+            },
+          },
+          (err) => {
+            if (err) reject(err instanceof Error ? err : new Error(errMessage(err)));
+            else resolve();
+          },
+        );
+        if (!ok) logger.warn('sloth: publish back-pressured (channel write buffer full)');
       });
-      if (!ok) logger.warn('sloth: publish back-pressured (channel write buffer full)');
 
       logger.info(
         `sloth: scheduled ${label} (${delayDesc}, took=${String(Date.now() - startTime)}ms)`,
@@ -124,13 +161,6 @@ export const slothDelaySender =
         `sloth: failed to schedule ${label} after ${String(Date.now() - startTime)}ms: ${errMessage(error)}`,
       );
       throw error;
-    } finally {
-      if (chan) {
-        try {
-          await chan.close();
-        } catch (closeError) {
-          logger.warn(`sloth: failed to close publish channel: ${errMessage(closeError)}`);
-        }
-      }
     }
   };
+};
