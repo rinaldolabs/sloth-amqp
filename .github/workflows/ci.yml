@@ -25,8 +25,21 @@ jobs:
       - name: Validate renovate.json
         run: npx --yes --package renovate -- renovate-config-validator --strict
 
+  type-check:
+    name: TypeScript type-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run type-check
+
   build:
-    name: TypeScript build
+    name: Dual-publish build (tsup)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -37,6 +50,14 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run build
+      - name: Verify dual ESM + CJS output
+        run: |
+          test -f dist/index.js
+          test -f dist/index.cjs
+          test -f dist/index.d.ts
+          test -f dist/index.d.cts
+          node --input-type=module -e "import('./dist/index.js').then(m => { if (!m.slothConnect) process.exit(1); })"
+          node -e "if (!require('./dist/index.cjs').slothConnect) process.exit(1)"
 
   coverage:
     name: Vitest Coverage
@@ -85,7 +106,7 @@ jobs:
       - uses: pre-commit/action@v3.0.1
 
   ci-gate:
-    needs: [lint, build, coverage, security, pre-commit]
+    needs: [lint, type-check, build, coverage, security, pre-commit]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
