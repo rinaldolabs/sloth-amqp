@@ -58,9 +58,11 @@ export async function setupDelayedMessageListener({
       logger.error(`sloth: listener channel error: ${err.message}`);
     });
 
+    // Broker-initiated channel close: just log. Don't null `channel` here —
+    // `closeResources` already nulls before calling close(), and the subsequent
+    // `connection.close()` cascade tears the channel down on the broker side.
     channel.on('close', () => {
       logger.warn('sloth: listener channel closed');
-      channel = null;
     });
 
     // Sloth re-delivers via sloth.headers.exchange.response (headers exchange) —
