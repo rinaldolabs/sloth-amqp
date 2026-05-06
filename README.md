@@ -6,7 +6,7 @@
 
 Node.js TypeScript client for [Sloth](https://gitlab.com/unboundsoftware/sloth) — a delayed-message delivery service over AMQP/RabbitMQ.
 
-This package is the TypeScript counterpart to [`gitlab.com/unboundsoftware/sloth/client-amqp`](https://gitlab.com/unboundsoftware/sloth/client-amqp) and implements the wire format defined by the Sloth [`amqp` source plugin](https://gitlab.com/unboundsoftware/sloth/amqp). It complements [@opzkit/nodeamqp](https://www.npmjs.com/package/@opzkit/nodeamqp), which handles event streams and request/response patterns.
+This package implements the same wire protocol as [`gitlab.com/unboundsoftware/sloth/client-amqp`](https://gitlab.com/unboundsoftware/sloth/client-amqp) (the canonical Go client) — the two can interoperate against the same Sloth server — but the TypeScript API is intentionally different; see [Compared to the Go client](#compared-to-the-go-client). The `SlothSetup` composition pattern is borrowed from [@opzkit/nodeamqp](https://www.npmjs.com/package/@opzkit/nodeamqp); the two libraries are otherwise independent and cover different patterns (`nodeamqp` handles event streams and request/response; this one handles delayed messages via Sloth).
 
 ## Installation
 
@@ -178,15 +178,14 @@ Headers sent with each delayed message:
 
 ## Compared to the Go client
 
-This package implements the same wire protocol as [`gitlab.com/unboundsoftware/sloth/client-amqp`](https://gitlab.com/unboundsoftware/sloth/client-amqp) — they can interoperate with the same Sloth server. The TypeScript API intentionally diverges from the Go API where idiomatic TypeScript suggests a different shape:
+The wire protocol — exchange names, routing keys, `delay-until` / `target` headers — is identical to [`gitlab.com/unboundsoftware/sloth/client-amqp`](https://gitlab.com/unboundsoftware/sloth/client-amqp). The TypeScript API intentionally diverges from the Go API where idiomatic TypeScript suggests a different shape:
 
-- **Per-call config instead of a type registry.** The Go client uses `reflect.TypeOf` to map request structs to routing keys at registration time. We require the caller to pass `{ serviceName, routingKey }` per send. TypeScript has no runtime type reflection for arbitrary types, and explicit config is type-safer than a runtime registry.
-- **Explicit listener handle.** `setupDelayedMessageListener` returns `SlothListenerHandle { consumerTag, close() }`. The Go client returns a `goamqp.Setup` function. The handle makes shutdown order explicit and prevents leaked consumers.
-- **Caller-owned connection.** `slothConnect` returns a `ChannelModel` that the caller owns; `slothDelaySender(client)` is a factory that does not take ownership. The Go client's `New()` opens and closes its own connection. The split lets one connection serve multiple senders/listeners and makes tests trivial.
+- **Per-call config instead of a type registry.** The Go client uses `reflect.TypeOf` to map request structs to routing keys at registration time (`New(serviceName, url, mappings...)`). We require the caller to pass `{ serviceName, routingKey }` per send. TypeScript has no runtime type reflection for arbitrary types, and explicit config is type-safer than a runtime registry.
+- **Explicit listener handle.** `setupDelayedMessageListener` returns `SlothListenerHandle { consumerTag, close() }`. The Go client returns a `goamqp.Setup` function and exposes `ResponseListener(handler, types...)`. The handle makes shutdown order explicit and prevents leaked consumers.
+- **Caller-owned connection.** `slothConnect` returns a `ChannelModel` that the caller owns; `slothDelaySender(client)` is a factory that does not take ownership. The Go client's `New()` opens and `Close()` closes the connection. The split lets one connection serve multiple senders/listeners and makes tests trivial.
+- **Three delay variants.** `delayMinutes`, `delaySeconds`, or `delayUntil: Date` — exactly one per send, enforced by a discriminated union at compile time and by a runtime guard at the system boundary. The Go client takes a single `time.Time`.
 - **Strict ack model.** The listener uses `noAck: false` and explicitly `ack`s on success or `nack(requeue=false)` on handler failure, relying on a broker-configured DLX for retries. The Go client uses goamqp's defaults.
 - **Injected logger.** All logging goes through an injected `SlothLogger` (`NoOpLogger` by default). Nothing is written to `console`.
-
-These are deliberate API choices, not accidents. The wire protocol — exchange names, routing keys, `delay-until` and `target` headers — is identical to the Go client.
 
 ## Related
 
@@ -199,7 +198,7 @@ Built on the work of [Unbound Software AB](https://gitlab.com/unboundsoftware) a
 
 - **[`gitlab.com/unboundsoftware/sloth`](https://gitlab.com/unboundsoftware/sloth)** — the Sloth delayed-message AMQP server (MIT). The wire protocol implemented here (`sloth.direct.exchange.request`, `sloth.headers.exchange.response`, `delay-until` / `target` headers) comes directly from the upstream Sloth `amqp` source plugin.
 - **[`gitlab.com/unboundsoftware/sloth/client-amqp`](https://gitlab.com/unboundsoftware/sloth/client-amqp)** — the canonical Go client (MIT). Used as the API-shape and behavior reference; the [Compared to the Go client](#compared-to-the-go-client) section above documents intentional divergences.
-- **[`github.com/opzkit/nodeamqp`](https://github.com/opzkit/nodeamqp)** — sibling Node.js AMQP library by the same upstream maintainer (MIT). Project scaffolding (release-please, conventional commits, peer-dependency pattern) was modeled on it.
+- **[`github.com/opzkit/nodeamqp`](https://github.com/opzkit/nodeamqp)** — Node.js AMQP library for event streams and request/response (MIT). The `SlothSetup` composition pattern (passing setup functions to `slothConnect`) and project scaffolding (release-please, conventional commits, `amqplib` as a peer dependency) were modeled on it. The runtime code is independent.
 
 Standards and specs this project follows: [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/), [Semantic Versioning 2.0.0](https://semver.org/), [Keep a Changelog](https://keepachangelog.com/), and the [AMQP 0-9-1 protocol](https://www.rabbitmq.com/tutorials/amqp-concepts).
 
