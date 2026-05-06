@@ -16,6 +16,10 @@ npm install @rinaldolabs/sloth-amqp amqplib
 
 Requires `amqplib` `^1.0.0` as a peer dependency.
 
+The package is **dual-published** as both ESM (`dist/index.js`) and CJS (`dist/index.cjs`) with matching `.d.ts` / `.d.cts` declarations. Node's resolver picks the right format automatically — works out of the box with Node ESM, Vitest, Jest (+ `@swc/jest`), ts-node, Bun, and Deno without any test-runner configuration.
+
+> **Dual-package note.** Avoid mixing ESM `import` and CJS `require` of this package in the same process. The `slothDelaySender` factory caches a `ConfirmChannel` in closure state; loading the package twice (once per format) gives you two independent caches. In practice, apps pick one module system and this is a non-issue.
+
 ## How Sloth works
 
 Sloth is a message delay service. Instead of delivering a message immediately, your service publishes it to Sloth with a `delay-until` timestamp. Sloth holds the message and re-delivers it to your response queue when the time arrives.
@@ -94,23 +98,40 @@ process.on('SIGTERM', () => void handle.close());
 process.on('SIGINT', () => void handle.close());
 ```
 
-### Custom logger
+### Logger compatibility
 
-Pass any logger that satisfies `SlothLogger` (winston, pino, console, etc.):
+Any object satisfying `SlothLogger` works. `child()` is **optional** — loggers that don't support contextual children (`console`, `@nestjs/common` Logger, electron-log, etc.) can omit it. The package never relies on `child()` internally; `withLogLevel` only proxies it when the wrapped logger has it.
+
+| Logger | How to pass it |
+| ------ | -------------- |
+| **winston** | `logger` directly — `winston.Logger` is structurally compatible |
+| **pino** | `logger` directly — `pino.Logger` is structurally compatible |
+| **bunyan** | `logger` directly |
+| **console** | Use the exported `consoleLogger` |
+| **`@nestjs/common` Logger** | Wrap (signature is `(message, context?)`, not `(message, ...meta)`) — see snippet below |
+| Custom | Implement `info / warn / error / debug` (and optionally `child`) |
 
 ```ts
-import type { SlothLogger } from '@rinaldolabs/sloth-amqp';
+import { consoleLogger, NoOpLogger } from '@rinaldolabs/sloth-amqp';
 
-const logger: SlothLogger = {
-  info: (msg, ...meta) => console.log(msg, ...meta),
-  warn: (msg, ...meta) => console.warn(msg, ...meta),
-  error: (msg, ...meta) => console.error(msg, ...meta),
-  debug: (msg, ...meta) => console.debug(msg, ...meta),
-  child: () => logger,
-};
+await send({ data, config, logger: consoleLogger, delayMinutes: 30 });
+// NoOpLogger (the default) silently discards all log calls.
 ```
 
-`NoOpLogger` (the default) silently discards all log calls.
+**Nest.js adapter:**
+
+```ts
+import { Logger } from '@nestjs/common';
+import type { SlothLogger } from '@rinaldolabs/sloth-amqp';
+
+const nest = new Logger('Sloth');
+const slothLogger: SlothLogger = {
+  info: (msg, ...meta) => nest.log(msg, ...meta.map(String)),
+  warn: (msg, ...meta) => nest.warn(msg, ...meta.map(String)),
+  error: (msg, ...meta) => nest.error(msg, ...meta.map(String)),
+  debug: (msg, ...meta) => nest.debug(msg, ...meta.map(String)),
+};
+```
 
 ### Setup composition
 

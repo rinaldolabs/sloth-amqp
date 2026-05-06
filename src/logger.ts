@@ -3,7 +3,13 @@ export interface SlothLogger {
   warn(msg: string, ...meta: unknown[]): void;
   error(msg: string, ...meta: unknown[]): void;
   debug(msg: string, ...meta: unknown[]): void;
-  child(meta: Record<string, unknown>): SlothLogger;
+  /**
+   * Optional. Loggers that don't support contextual children (`console`,
+   * `@nestjs/common` Logger, electron-log, etc.) can omit this. The package
+   * never relies on `child()` internally — `withLogLevel` only proxies it
+   * when the wrapped logger has it.
+   */
+  child?(meta: Record<string, unknown>): SlothLogger;
 }
 
 export type SlothLogLevel = 'debug' | 'info' | 'warn' | 'error' | 'silent';
@@ -43,7 +49,7 @@ export const resolveLogger = (inner: SlothLogger, minLevel?: SlothLogLevel): Slo
 export const withLogLevel = (inner: SlothLogger, minLevel: SlothLogLevel): SlothLogger => {
   const min = rankFor(minLevel);
   const allow = (level: Exclude<SlothLogLevel, 'silent'>): boolean => rankFor(level) >= min;
-  return {
+  const base: SlothLogger = {
     debug: (msg, ...meta) => {
       if (allow('debug')) inner.debug(msg, ...meta);
     },
@@ -56,6 +62,34 @@ export const withLogLevel = (inner: SlothLogger, minLevel: SlothLogLevel): Sloth
     error: (msg, ...meta) => {
       if (allow('error')) inner.error(msg, ...meta);
     },
-    child: (meta) => withLogLevel(inner.child(meta), minLevel),
   };
+  // Only expose `child` on the wrapper when the inner logger has it. Avoids
+  // synthesising a no-op child that would silently drop context metadata.
+  // `.bind(inner)` keeps `this` attached for winston/pino-style loggers whose
+  // `child` implementations depend on it.
+  const childFn = inner.child?.bind(inner);
+  if (childFn) base.child = (meta) => withLogLevel(childFn(meta), minLevel);
+  return base;
+};
+
+/**
+ * Minimal `SlothLogger` that delegates to the global `console`. Suitable for
+ * scripts, demos, and quick local debugging. Production code should use a
+ * structured logger (winston, pino, bunyan) instead.
+ *
+ * Has no `child()` — contextual logging belongs in a real structured logger.
+ */
+export const consoleLogger: SlothLogger = {
+  info: (msg, ...meta) => {
+    console.log(msg, ...meta);
+  },
+  warn: (msg, ...meta) => {
+    console.warn(msg, ...meta);
+  },
+  error: (msg, ...meta) => {
+    console.error(msg, ...meta);
+  },
+  debug: (msg, ...meta) => {
+    console.debug(msg, ...meta);
+  },
 };

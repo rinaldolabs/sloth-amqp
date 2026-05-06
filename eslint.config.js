@@ -40,6 +40,7 @@ export default tseslint.config(
       '.github/commitlint.config.cjs',
       'vitest.config.ts',
       'vitest.integration.config.ts',
+      'tsup.config.ts',
       'eslint.config.js',
     ],
   },

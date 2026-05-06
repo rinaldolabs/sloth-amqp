@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-import { NoOpLogger, withLogLevel, type SlothLogger } from '../logger.js';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { consoleLogger, NoOpLogger, withLogLevel, type SlothLogger } from '../logger.js';
 
 const makeMockLogger = (): SlothLogger => ({
   debug: vi.fn(),
@@ -94,10 +94,71 @@ describe('withLogLevel', () => {
   it('child preserves the level filter', () => {
     const inner = makeMockLogger();
     const wrapped = withLogLevel(inner, 'warn');
-    const child = wrapped.child({ fn: 'x' });
+    // child is optional in the public type; the inner mock provides it,
+    // so the wrapper must too.
+    expect(wrapped.child).toBeTypeOf('function');
+    const child = wrapped.child!({ fn: 'x' });
     child.info('i');
     child.error('e');
     expect(inner.info).not.toHaveBeenCalled();
     expect(inner.error).toHaveBeenCalledWith('e');
+  });
+
+  it('omits child on the wrapper when inner has no child', () => {
+    const inner: SlothLogger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const wrapped = withLogLevel(inner, 'debug');
+    expect(wrapped.child).toBeUndefined();
+    // The four levels still work — child being absent doesn't break the wrapper.
+    wrapped.info('hello');
+    expect(inner.info).toHaveBeenCalledWith('hello');
+  });
+});
+
+describe('consoleLogger', () => {
+  // Spies are created per-test and restored after each one so the underlying
+  // console methods don't stay mocked for the rest of the Vitest worker.
+  let logSpy: MockInstance<typeof console.log>;
+  let warnSpy: MockInstance<typeof console.warn>;
+  let errorSpy: MockInstance<typeof console.error>;
+  let debugSpy: MockInstance<typeof console.debug>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('forwards info to console.log with meta', () => {
+    consoleLogger.info('msg', { a: 1 }, 'b');
+    expect(logSpy).toHaveBeenCalledWith('msg', { a: 1 }, 'b');
+  });
+
+  it('forwards warn to console.warn', () => {
+    consoleLogger.warn('w');
+    expect(warnSpy).toHaveBeenCalledWith('w');
+  });
+
+  it('forwards error to console.error', () => {
+    consoleLogger.error('e', new Error('boom'));
+    expect(errorSpy).toHaveBeenCalledWith('e', new Error('boom'));
+  });
+
+  it('forwards debug to console.debug', () => {
+    consoleLogger.debug('d');
+    expect(debugSpy).toHaveBeenCalledWith('d');
+  });
+
+  it('has no child method (contextual logging belongs in structured loggers)', () => {
+    expect(consoleLogger.child).toBeUndefined();
   });
 });
