@@ -50,7 +50,7 @@
     "eslint-plugin-security": "4.0.0",
     "lockfile-lint": "5.0.0",
     "prettier": "3.8.3",
-    "publint": "^0.3.19",
+    "publint": "^0.3.20",
     "size-limit": "^12.1.0",
     "testcontainers": "^11.14.0",
     "tsup": "^8.5.1",
