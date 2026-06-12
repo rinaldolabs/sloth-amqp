@@ -37,8 +37,8 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "0.18.2",
-    "@commitlint/cli": "20.5.3",
-    "@commitlint/config-conventional": "20.5.3",
+    "@commitlint/cli": "21.0.2",
+    "@commitlint/config-conventional": "21.0.2",
     "@cyclonedx/cyclonedx-npm": "4.2.1",
     "@eslint/js": "^10.0.1",
     "@size-limit/preset-small-lib": "^12.1.0",
