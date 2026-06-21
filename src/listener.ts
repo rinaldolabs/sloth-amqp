@@ -73,12 +73,12 @@ export async function setupDelayedMessageListener({
     connection = await raceWithAbort(amqp.connect(amqpUrl), signal, safeClose);
     channel = await raceWithAbort(connection.createChannel(), signal, safeClose);
 
-    channel.on('error', (err: Error) => {
-      logger.error(`sloth: listener channel error: ${err.message}`, {
+    channel.on('error', (err: unknown) => {
+      logger.error(`sloth: listener channel error: ${errMessage(err)}`, {
         event: 'sloth.listener.channel_error',
         serviceName: config.serviceName,
         routingKey: config.routingKey,
-        reason: err.message,
+        reason: errMessage(err),
       });
     });
 
