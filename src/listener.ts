@@ -113,7 +113,10 @@ export async function setupDelayedMessageListener({
       channel.assertQueue(queueName, { durable: true, expires: queueExpiresMs }),
       signal,
     );
-    // Bind using headers: Sloth sets service={serviceName} when publishing the response
+    // Headers exchange: routing is matched on the binding arguments
+    // (service={serviceName}, set by Sloth on the response), NOT on the routing
+    // key. The routing-key arg below is ignored by the broker for matching —
+    // don't "fix" it into the matcher.
     await raceWithAbort(
       channel.bindQueue(queueName, slothResponseExchangeName, config.routingKey, {
         service: config.serviceName,
