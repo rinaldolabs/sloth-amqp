@@ -38,6 +38,24 @@ describe('slothConnect', () => {
     expect(client).toBe(mockClient);
   });
 
+  it('runs setup functions sequentially in argument order', async () => {
+    const { slothConnect } = await import('../connection.js');
+    const order: number[] = [];
+    // First setup resolves on a later microtask tick; if setups ran via
+    // Promise.all, setup2 would push before setup1. Sequential awaits force
+    // 1-before-2 regardless of each setup's internal timing.
+    const setup1 = vi.fn(async () => {
+      await Promise.resolve();
+      order.push(1);
+    });
+    const setup2 = vi.fn(() => {
+      order.push(2);
+      return Promise.resolve();
+    });
+    await slothConnect('amqp://localhost', setup1, setup2);
+    expect(order).toEqual([1, 2]);
+  });
+
   it('propagates connection errors', async () => {
     const { slothConnect } = await import('../connection.js');
     mockConnect.mockRejectedValueOnce(new Error('refused'));

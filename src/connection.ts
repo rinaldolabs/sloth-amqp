@@ -67,13 +67,19 @@ export async function slothConnect(
   // `safeClose` ensures it gets closed instead of leaking.
   const client = await raceWithAbort(amqp.connect(url), signal, safeClose);
 
-  // If the signal aborts during setups, close the connection we just opened
-  // so it doesn't leak, then propagate the abort reason.
+  // Run setups sequentially in argument order. They share one ChannelModel,
+  // so a later setup may depend on a resource an earlier one declared (e.g.
+  // bind a queue an earlier setup asserted); amqplib serialises RPCs per
+  // channel but gives no cross-setup ordering guarantee, so Promise.all could
+  // race a bindQueue ahead of its assertQueue. Sequential awaits are cheap
+  // (a handful of calls at connect time) and match amqp-connection-manager /
+  // rascal. If the signal aborts mid-setup, close the connection we just
+  // opened so it doesn't leak, then propagate the abort reason.
+  const runSetups = async (): Promise<void> => {
+    for (const fn of setups) await fn(client);
+  };
   try {
-    await raceWithAbort(
-      Promise.all(setups.map((fn) => fn(client))).then(() => undefined),
-      signal,
-    );
+    await raceWithAbort(runSetups(), signal);
   } catch (error) {
     await safeClose(client);
     throw error;
