@@ -8,6 +8,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Least privilege by default; the coverage job opts up to pull-requests: write
+# for its PR comment.
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: ESLint + Prettier
