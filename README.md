@@ -19,7 +19,7 @@ This package implements the same wire protocol as [`gitlab.com/unboundsoftware/s
 npm install @rinaldolabs/sloth-amqp amqplib
 ```
 
-Requires `amqplib` `^1.0.0` as a peer dependency.
+Requires `amqplib` `^2.0.0` as a peer dependency.
 
 The package is **dual-published** as both ESM (`dist/index.js`) and CJS (`dist/index.cjs`) with matching `.d.ts` / `.d.cts` declarations. Node's resolver picks the right format automatically — works out of the box with Node ESM, Vitest, Jest (+ `@swc/jest`), ts-node, Bun, and Deno without any test-runner configuration.
 
