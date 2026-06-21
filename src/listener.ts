@@ -1,4 +1,4 @@
-import amqp, { type Channel, type ChannelModel } from 'amqplib';
+import amqp, { type Channel, type ChannelModel, type ConsumeMessage } from 'amqplib';
 import { combineAbort, raceWithAbort, safeClose } from './abort.js';
 import { errMessage, SlothConnectError, SlothError, SlothValidationError } from './errors.js';
 import { NoOpLogger, resolveLogger } from './logger.js';
@@ -66,6 +66,39 @@ export async function setupDelayedMessageListener({
         event: 'sloth.listener.resources_release_failed',
         serviceName: config.serviceName,
         routingKey: config.routingKey,
+        reason: errMessage(error),
+      });
+    }
+  };
+
+  // amqplib's ack/nack throw IllegalOperationError *synchronously* if the channel
+  // has already closed (e.g. a broker-initiated close racing an in-flight
+  // handler). Swallow that so a transient channel loss can't escalate to an
+  // unhandled rejection and crash the process; log it instead.
+  const safeAck = (message: ConsumeMessage): void => {
+    try {
+      channel?.ack(message);
+    } catch (error) {
+      logger.error(`sloth: ack failed: ${errMessage(error)}`, {
+        event: 'sloth.listener.ack_failed',
+        serviceName: config.serviceName,
+        routingKey: config.routingKey,
+        messageId: message.properties.messageId as string | undefined,
+        correlationId: message.properties.correlationId as string | undefined,
+        reason: errMessage(error),
+      });
+    }
+  };
+  const safeNack = (message: ConsumeMessage): void => {
+    try {
+      channel?.nack(message, false, false);
+    } catch (error) {
+      logger.error(`sloth: nack failed: ${errMessage(error)}`, {
+        event: 'sloth.listener.nack_failed',
+        serviceName: config.serviceName,
+        routingKey: config.routingKey,
+        messageId: message.properties.messageId as string | undefined,
+        correlationId: message.properties.correlationId as string | undefined,
         reason: errMessage(error),
       });
     }
@@ -145,7 +178,7 @@ export async function setupDelayedMessageListener({
               messageId: message.properties.messageId as string | undefined,
               correlationId: message.properties.correlationId as string | undefined,
             });
-            channel?.nack(message, false, false);
+            safeNack(message);
             return;
           }
           emitWire(() => {
@@ -165,7 +198,7 @@ export async function setupDelayedMessageListener({
           });
           onMessage(message)
             .then(() => {
-              channel?.ack(message);
+              safeAck(message);
             })
             .catch((err: unknown) => {
               logger.error(`sloth: onMessage handler failed: ${errMessage(err)}`, {
@@ -177,7 +210,7 @@ export async function setupDelayedMessageListener({
                 reason: errMessage(err),
               });
               // requeue=false: rely on a broker-configured DLX for retries.
-              channel?.nack(message, false, false);
+              safeNack(message);
             });
         },
         { noAck: false },

@@ -194,6 +194,8 @@ Every log call from this package emits an object-first second argument with a st
 | `sloth.listener.ready`                    | info  | listener        | + `queueName`, `consumerTag`                                           |
 | `sloth.listener.handler_failed`           | error | listener        | + `messageId`, `correlationId`, `reason`                               |
 | `sloth.listener.unexpected_message`       | error | listener        | + `messageId`, `correlationId`                                         |
+| `sloth.listener.ack_failed`               | error | listener        | + `messageId`, `correlationId`, `reason`                               |
+| `sloth.listener.nack_failed`              | error | listener        | + `messageId`, `correlationId`, `reason`                               |
 | `sloth.listener.channel_error`            | error | listener        | + `reason`                                                             |
 | `sloth.listener.channel_closed`           | warn  | listener        | `serviceName`, `routingKey`                                            |
 | `sloth.listener.consumer_cancel_failed`   | error | listener        | + `consumerTag`, `reason`                                              |

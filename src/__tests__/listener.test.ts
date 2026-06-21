@@ -256,6 +256,60 @@ describe('setupDelayedMessageListener', () => {
     await handle.close();
   });
 
+  it('logs ack_failed and does not throw when ack throws (channel closed race)', async () => {
+    const setupFn = await setup();
+    const onMessage = vi.fn().mockResolvedValue(undefined);
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage,
+      logger: mockLogger,
+    });
+
+    mockChannelAck.mockImplementationOnce(() => {
+      throw new Error('Channel closed');
+    });
+    const consumeCallback = mockChannel.consume.mock.calls[0]?.[1] as (msg: unknown) => void;
+    const fakeMsg = { content: Buffer.from('{}'), properties: { headers: {} } };
+    expect(() => {
+      consumeCallback(fakeMsg);
+    }).not.toThrow();
+    await new Promise((r) => setImmediate(r));
+
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('ack failed'),
+      expect.objectContaining({ event: 'sloth.listener.ack_failed' }),
+    );
+    await handle.close();
+  });
+
+  it('logs nack_failed and does not throw when nack throws after handler failure', async () => {
+    const setupFn = await setup();
+    const onMessage = vi.fn().mockRejectedValue(new Error('handler boom'));
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage,
+      logger: mockLogger,
+    });
+
+    mockChannelNack.mockImplementationOnce(() => {
+      throw new Error('Channel closed');
+    });
+    const consumeCallback = mockChannel.consume.mock.calls[0]?.[1] as (msg: unknown) => void;
+    const fakeMsg = { content: Buffer.from('{}'), properties: { headers: {} } };
+    expect(() => {
+      consumeCallback(fakeMsg);
+    }).not.toThrow();
+    await new Promise((r) => setImmediate(r));
+
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('nack failed'),
+      expect.objectContaining({ event: 'sloth.listener.nack_failed' }),
+    );
+    await handle.close();
+  });
+
   it('handles non-Error rejection from onMessage', async () => {
     const setupFn = await setup();
     const onMessage = vi.fn().mockRejectedValue('string-failure');
