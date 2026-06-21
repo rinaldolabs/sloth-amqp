@@ -41,9 +41,11 @@ describe('resolveDelaySeconds', () => {
     expect(delayDesc).toContain('until=');
   });
 
-  it('throws when no delay field is provided', async () => {
+  it('throws a SlothValidationError when no delay field is provided', async () => {
     const { resolveDelaySeconds } = await import('../sender.js');
+    const { SlothValidationError } = await import('../errors.js');
     expect(() => resolveDelaySeconds({} as never)).toThrow('exactly one');
+    expect(() => resolveDelaySeconds({} as never)).toThrow(SlothValidationError);
   });
 
   it('throws when both delayMinutes and delaySeconds are provided', async () => {
@@ -397,8 +399,9 @@ describe('createDelaySender', () => {
     ).rejects.toThrow('exchange error');
   });
 
-  it('rejects when broker nacks the publish (callback err)', async () => {
+  it('rejects with a SlothPublishError when broker nacks the publish (callback err)', async () => {
     const { createDelaySender } = await import('../sender.js');
+    const { SlothPublishError } = await import('../errors.js');
     mockPublish.mockImplementationOnce(
       (_ex: string, _rk: string, _body: Buffer, _opts: unknown, cb: PublishCallback): boolean => {
         cb(new Error('broker nacked'));
@@ -412,7 +415,7 @@ describe('createDelaySender', () => {
         logger: mockLogger,
         config: testConfig,
       }),
-    ).rejects.toThrow('broker nacked');
+    ).rejects.toThrow(SlothPublishError);
     expect(mockLogger.error).toHaveBeenCalledWith(
       expect.stringContaining('failed to schedule'),
       expect.objectContaining({ event: 'sloth.publish.failed' }),

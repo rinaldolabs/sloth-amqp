@@ -202,6 +202,35 @@ Every log call from this package emits an object-first second argument with a st
 | `sloth.ping.failed`                       | error | ping            | `reason`                                                               |
 | `sloth.wire.hook_failed`                  | warn  | sender/listener | `direction`, `reason`                                                  |
 
+### Errors
+
+Every error this library throws extends `SlothError`, which carries a readonly `code` so you can branch on the failure kind without matching message strings:
+
+| Class                  | `code`             | Thrown when                                                                                                                                                                                                  |
+| ---------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SlothValidationError` | `SLOTH_VALIDATION` | Invalid input caught at a boundary before any AMQP work (delay spec, config, `amqpUrl`, `queueExpiresMs`, `prefetch`, `timeoutMs`, reserved headers, non-serializable `data`). A caller bug — fix the input. |
+| `SlothPublishError`    | `SLOTH_PUBLISH`    | A publish failed — broker nack or a channel that died before the publisher was ready. The original cause is chained on `error.cause`.                                                                        |
+| `SlothTimeoutError`    | `SLOTH_TIMEOUT`    | A `send` exceeded its `timeoutMs` / `signal` deadline (see [Cancellation and timeouts](#cancellation-and-timeouts)).                                                                                         |
+| `SlothConnectError`    | `SLOTH_CONNECT`    | Connection or listener setup failed against the broker; the amqplib cause is chained on `error.cause`.                                                                                                       |
+
+```ts
+import { SlothTimeoutError, SlothValidationError } from '@rinaldolabs/sloth-amqp';
+
+try {
+  await send({ data, config, logger, delaySeconds: 60, timeoutMs: 5_000 });
+} catch (e) {
+  if (e instanceof SlothTimeoutError) {
+    // confirm didn't arrive in time — may still have been delivered (see below)
+  } else if (e instanceof SlothValidationError) {
+    throw e; // a bug in the call — don't retry
+  } else {
+    throw e; // SlothPublishError, or a broker/network error
+  }
+}
+```
+
+Abort/timeout raised from a caller's **own** `AbortSignal` still surfaces as the WHATWG `DOMException` (`AbortError` / `TimeoutError`), not a `SlothError` — see [Cancellation and timeouts](#cancellation-and-timeouts).
+
 ### Cancellation and timeouts
 
 Both `slothConnect` and `setupDelayedMessageListener` accept an optional `signal` (`AbortSignal`) and `timeoutMs` to bound the network setup phase. Internally they compose via `AbortSignal.any` and reject with `signal.reason` propagated **verbatim**, matching WHATWG `fetch`/undici semantics — the package never wraps the reason.

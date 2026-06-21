@@ -1,4 +1,5 @@
 import { hostname } from 'node:os';
+import { SlothValidationError } from './errors.js';
 
 // Wire protocol constants for the Sloth amqp source plugin.
 // See: ServiceRequestConsumer("delay", ...) and PublishServiceResponse(...) in
@@ -25,7 +26,7 @@ const safeIdentifier = /^[A-Za-z0-9._-]+$/;
 
 const assertSafeIdentifier = (value: string, fieldName: string): void => {
   if (typeof value !== 'string' || !safeIdentifier.test(value)) {
-    throw new Error(`${fieldName} must match [A-Za-z0-9._-]+`);
+    throw new SlothValidationError(`${fieldName} must match [A-Za-z0-9._-]+`);
   }
 };
 

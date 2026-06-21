@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ChannelModel, ConfirmChannel } from 'amqplib';
-import { errMessage } from './errors.js';
+import { errMessage, SlothPublishError, SlothValidationError } from './errors.js';
 import { resolveLogger } from './logger.js';
 import type { DelaySpec, SendDelayMessageParams } from './types.js';
 import { assertSafeSlothConfig, getSlothTarget, slothRequestExchangeName } from './utils.js';
@@ -27,7 +27,7 @@ const assertNoReservedHeaders = (
   if (!headers) return {};
   for (const key of Object.keys(headers)) {
     if (RESERVED_HEADERS.has(key)) {
-      throw new Error(
+      throw new SlothValidationError(
         `headers.${key} is reserved by the Sloth wire protocol and cannot be overridden`,
       );
     }
@@ -70,15 +70,17 @@ export const resolveDelaySeconds = (
   const { delayUntil, delaySeconds, delayMinutes } = params;
   const setCount = [delayUntil, delaySeconds, delayMinutes].filter((v) => v !== undefined).length;
   if (setCount !== 1)
-    throw new Error('exactly one of delayMinutes, delaySeconds, or delayUntil must be provided');
+    throw new SlothValidationError(
+      'exactly one of delayMinutes, delaySeconds, or delayUntil must be provided',
+    );
   const nowMs = Date.now();
 
   if (delayUntil !== undefined) {
     const ms = delayUntil.getTime();
-    if (!Number.isFinite(ms)) throw new Error('delayUntil is an invalid Date');
+    if (!Number.isFinite(ms)) throw new SlothValidationError('delayUntil is an invalid Date');
     const delayUntilUnix = Math.ceil(ms / 1000);
     if (delayUntilUnix - Math.floor(nowMs / 1000) > MAX_DELAY_SECONDS)
-      throw new Error('delayUntil exceeds maximum allowed delay of 100 years');
+      throw new SlothValidationError('delayUntil exceeds maximum allowed delay of 100 years');
     const base = { delayUntilUnix, delayDesc: `until=${delayUntil.toISOString()}` };
     return ms <= nowMs
       ? {
@@ -90,9 +92,9 @@ export const resolveDelaySeconds = (
 
   if (delaySeconds !== undefined) {
     if (!Number.isFinite(delaySeconds) || delaySeconds <= 0)
-      throw new Error('delaySeconds must be a positive finite number');
+      throw new SlothValidationError('delaySeconds must be a positive finite number');
     if (delaySeconds > MAX_DELAY_SECONDS)
-      throw new Error('delaySeconds exceeds maximum allowed delay of 100 years');
+      throw new SlothValidationError('delaySeconds exceeds maximum allowed delay of 100 years');
     return {
       delayUntilUnix: Math.floor((nowMs + delaySeconds * 1000) / 1000),
       delayDesc: `delay=${String(delaySeconds)}s`,
@@ -100,9 +102,9 @@ export const resolveDelaySeconds = (
   }
 
   if (!Number.isFinite(delayMinutes) || delayMinutes <= 0)
-    throw new Error('delayMinutes must be a positive finite number');
+    throw new SlothValidationError('delayMinutes must be a positive finite number');
   if (delayMinutes * 60 > MAX_DELAY_SECONDS)
-    throw new Error('delayMinutes exceeds maximum allowed delay of 100 years');
+    throw new SlothValidationError('delayMinutes exceeds maximum allowed delay of 100 years');
   return {
     delayUntilUnix: Math.floor((nowMs + delayMinutes * 60 * 1000) / 1000),
     delayDesc: `delay=${String(delayMinutes)}min`,
@@ -114,7 +116,7 @@ export const serializeData = (data: unknown): Buffer => {
   try {
     return Buffer.from(JSON.stringify(data));
   } catch {
-    throw new Error('data is not JSON-serializable');
+    throw new SlothValidationError('data is not JSON-serializable');
   }
 };
 
@@ -180,7 +182,7 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
     if (status.dead) {
       // The channel emitted error/close while assertExchange was in flight.
       // Don't cache a dead channel — surface the failure so the caller retries.
-      throw new Error('sloth: confirm channel closed before publisher was ready');
+      throw new SlothPublishError('sloth: confirm channel closed before publisher was ready');
     }
     cached = chan;
     return chan;
@@ -252,7 +254,7 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
             headers,
           },
           (err) => {
-            if (err) reject(err instanceof Error ? err : new Error(errMessage(err)));
+            if (err) reject(new SlothPublishError(errMessage(err), { cause: err }));
             else resolve();
           },
         );

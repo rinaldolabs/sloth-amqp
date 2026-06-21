@@ -1,5 +1,13 @@
 export { slothClose, slothConnect } from './connection.js';
 export type { SlothConnectOptions } from './connection.js';
+export {
+  SlothConnectError,
+  SlothError,
+  SlothPublishError,
+  SlothTimeoutError,
+  SlothValidationError,
+} from './errors.js';
+export type { SlothErrorCode } from './errors.js';
 export { setupDelayedMessageListener } from './listener.js';
 export { ping } from './ping.js';
 export type { PingOptions } from './ping.js';

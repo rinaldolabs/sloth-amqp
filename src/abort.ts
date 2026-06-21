@@ -1,3 +1,5 @@
+import { SlothValidationError } from './errors.js';
+
 /**
  * Best-effort close: invokes `.close()` on a resource (channel, connection,
  * etc.) and swallows any rejection. Used as the `onLoserSettle` callback
@@ -32,7 +34,7 @@ export const combineAbort = (
   timeoutMs: number | undefined,
 ): AbortSignal | undefined => {
   if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) {
-    throw new Error('timeoutMs must be a positive finite number');
+    throw new SlothValidationError('timeoutMs must be a positive finite number');
   }
   const parts: AbortSignal[] = [];
   if (signal) parts.push(signal);

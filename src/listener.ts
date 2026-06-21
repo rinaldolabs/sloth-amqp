@@ -1,6 +1,6 @@
 import amqp, { type Channel, type ChannelModel } from 'amqplib';
 import { combineAbort, raceWithAbort, safeClose } from './abort.js';
-import { errMessage } from './errors.js';
+import { errMessage, SlothConnectError, SlothError, SlothValidationError } from './errors.js';
 import { NoOpLogger, resolveLogger } from './logger.js';
 import type { SlothListenerHandle, SlothListenerOptions } from './types.js';
 import {
@@ -25,14 +25,14 @@ export async function setupDelayedMessageListener({
   onWireMessage,
 }: SlothListenerOptions): Promise<SlothListenerHandle> {
   if (!amqpUrl) {
-    throw new Error('amqpUrl must not be empty');
+    throw new SlothValidationError('amqpUrl must not be empty');
   }
   assertSafeSlothConfig(config);
   if (!Number.isFinite(queueExpiresMs) || queueExpiresMs <= 0) {
-    throw new Error('queueExpiresMs must be a positive finite number');
+    throw new SlothValidationError('queueExpiresMs must be a positive finite number');
   }
   if (!Number.isInteger(prefetch) || prefetch < 0) {
-    throw new Error('prefetch must be a non-negative integer');
+    throw new SlothValidationError('prefetch must be a non-negative integer');
   }
 
   const signal = combineAbort(rawSignal, timeoutMs);
@@ -220,6 +220,9 @@ export async function setupDelayedMessageListener({
       reason: errMessage(error),
     });
     await closeResources();
-    throw error;
+    // Surface our own errors and WHATWG abort/timeout reasons verbatim; wrap a
+    // foreign (amqplib/broker) failure as SlothConnectError with the cause.
+    if (error instanceof SlothError || error instanceof DOMException) throw error;
+    throw new SlothConnectError(errMessage(error), { cause: error });
   }
 }

@@ -1,5 +1,6 @@
 import amqp, { type ChannelModel } from 'amqplib';
 import { combineAbort, raceWithAbort, safeClose } from './abort.js';
+import { SlothValidationError } from './errors.js';
 import type { SlothSetup } from './types.js';
 
 /**
@@ -52,7 +53,7 @@ export async function slothConnect(
   ...rest: (SlothConnectOptions | SlothSetup | undefined)[]
 ): Promise<ChannelModel> {
   if (!url) {
-    throw new Error('AMQP URL must not be empty');
+    throw new SlothValidationError('AMQP URL must not be empty');
   }
   const [first, ...remaining] = rest;
   const firstIsOptions = isOptions(first);
