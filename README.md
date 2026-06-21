@@ -3,7 +3,7 @@
 [![CI](https://github.com/rinaldolabs/sloth-amqp/actions/workflows/ci.yml/badge.svg)](https://github.com/rinaldolabs/sloth-amqp/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@rinaldolabs/sloth-amqp.svg)](https://www.npmjs.com/package/@rinaldolabs/sloth-amqp)
 [![install size](https://packagephobia.com/badge?p=@rinaldolabs/sloth-amqp)](https://packagephobia.com/result?p=@rinaldolabs/sloth-amqp)
-[![bundle size](https://img.shields.io/badge/bundle-~3KB%20br-brightgreen)](./.size-limit.cjs)
+[![bundle size](https://img.shields.io/badge/bundle-~4KB%20br-brightgreen)](./.size-limit.cjs)
 [![types: built-in](https://img.shields.io/badge/types-built--in-blue)](./src/index.ts)
 [![Node](https://img.shields.io/node/v/@rinaldolabs/sloth-amqp)](./package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
@@ -425,7 +425,7 @@ import type {
 | Built-in TypeScript types (no `@types/*`)            | ✅                         | ✅                   | ✅                        | ✅                  |
 | Zero runtime dependencies                            | ✅ (amqplib is a peer dep) | n/a                  | adds reconnect-core       | many                |
 | Object-first structured log events                   | ✅ stable contract         | n/a                  | n/a                       | partial             |
-| Bundle size (minified+brotli)                        | ~3 KB per format           | n/a                  | larger                    | much larger         |
+| Bundle size (minified+brotli)                        | ~4 KB per format           | n/a                  | larger                    | much larger         |
 | npm provenance (Sigstore)                            | ✅                         | varies               | varies                    | varies              |
 
 `amqplib` is a peer dependency, not a competitor — this package is a thin layer on top. The comparison is for "what can I drop in without rebuilding the same wheels every consumer of `amqplib` builds."
