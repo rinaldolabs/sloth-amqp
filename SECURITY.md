@@ -12,6 +12,8 @@ Do not file a public issue for security problems.
 
 You will receive an acknowledgement within 7 days. Fixes are released as patch versions and noted in `CHANGELOG.md`.
 
+Remediation targets by severity (CVSS): Critical within 24 hours, High within 7 days, Medium within 30 days, Low by the next release.
+
 ## Known dev-only advisories
 
 `npm audit` (run without `--omit=dev`) reports advisories that live entirely in
