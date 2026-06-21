@@ -3,7 +3,7 @@
 [![CI](https://github.com/rinaldolabs/sloth-amqp/actions/workflows/ci.yml/badge.svg)](https://github.com/rinaldolabs/sloth-amqp/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/@rinaldolabs/sloth-amqp.svg)](https://www.npmjs.com/package/@rinaldolabs/sloth-amqp)
 [![install size](https://packagephobia.com/badge?p=@rinaldolabs/sloth-amqp)](https://packagephobia.com/result?p=@rinaldolabs/sloth-amqp)
-[![bundle size](https://img.shields.io/badge/bundle-%3C6KB%20gz-brightgreen)](./.size-limit.cjs)
+[![bundle size](https://img.shields.io/badge/bundle-~3KB%20br-brightgreen)](./.size-limit.cjs)
 [![types: built-in](https://img.shields.io/badge/types-built--in-blue)](./src/index.ts)
 [![Node](https://img.shields.io/node/v/@rinaldolabs/sloth-amqp)](./package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
