@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertSafeSlothConfig,
+  defaultListenerPrefetch,
   defaultListenerQueueExpiresMs,
   getSlothQueueName,
   getSlothTarget,
+  slothClientProperties,
   slothRequestExchangeName,
   slothResponseExchangeName,
 } from '../utils.js';
@@ -37,6 +39,29 @@ describe('getSlothTarget', () => {
 describe('defaultListenerQueueExpiresMs', () => {
   it('is 5 days in ms', () => {
     expect(defaultListenerQueueExpiresMs).toBe(5 * 24 * 60 * 60 * 1000);
+  });
+});
+
+describe('defaultListenerPrefetch', () => {
+  it('is 20', () => {
+    expect(defaultListenerPrefetch).toBe(20);
+  });
+});
+
+describe('slothClientProperties', () => {
+  it('defaults connection_name to <serviceName>:sloth-amqp@<hostname>', () => {
+    const props = slothClientProperties({ serviceName: 'my-service' });
+    expect(props['connection_name']).toMatch(/^my-service:sloth-amqp@.+/);
+  });
+
+  it('uses an explicit connectionName verbatim', () => {
+    expect(slothClientProperties({ serviceName: 'my-service', connectionName: 'pinned' })).toEqual({
+      connection_name: 'pinned',
+    });
+  });
+
+  it('rejects an unsafe serviceName', () => {
+    expect(() => slothClientProperties({ serviceName: '../evil' })).toThrow('serviceName');
   });
 });
 

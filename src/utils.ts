@@ -1,3 +1,5 @@
+import { hostname } from 'node:os';
+
 // Wire protocol constants for the Sloth amqp source plugin.
 // See: ServiceRequestConsumer("delay", ...) and PublishServiceResponse(...) in
 // gitlab.com/unboundsoftware/sloth/amqp/amqp.go
@@ -36,6 +38,22 @@ export const assertSafeSlothConfig = (config: SlothConfig): void => {
 export const getSlothQueueName = (config: SlothConfig): string => {
   assertSafeSlothConfig(config);
   return `${slothResponseExchangeName}.queue.${config.serviceName}`;
+};
+
+// Builds an AMQP `clientProperties` object with a `connection_name` for broker
+// observability (RabbitMQ management UI / list_connections). Pass the result as
+// `clientProperties` to slothConnect. When `connectionName` is omitted it
+// defaults to `<serviceName>:sloth-amqp@<hostname>` so each service is
+// identifiable. The hostname is a pod/task id in container environments but can
+// be a personal machine name locally — pass an explicit `connectionName` if
+// that matters. Never includes credentials or the AMQP URL.
+export const slothClientProperties = (params: {
+  serviceName: string;
+  connectionName?: string;
+}): Record<string, unknown> => {
+  assertSafeIdentifier(params.serviceName, 'serviceName');
+  const connection_name = params.connectionName ?? `${params.serviceName}:sloth-amqp@${hostname()}`;
+  return { connection_name };
 };
 
 // target header format: amqp://{serviceName}/{routingKey} — the Sloth server parses this with

@@ -35,7 +35,7 @@ This package implements a single messaging pattern: **delayed-message request/re
 
 ### Modules (all under `src/`)
 
-- **`connection.ts`** — `slothConnect(url, ...setups)` opens an `amqplib.ChannelModel`, runs optional `SlothSetup` functions, returns the model. Optional first arg `SlothConnectOptions { signal?, timeoutMs? }` bounds the connect+setup phase via `AbortSignal`. `slothClose` closes it. Caller owns the connection.
+- **`connection.ts`** — `slothConnect(url, ...setups)` opens an `amqplib.ChannelModel`, runs optional `SlothSetup` functions **sequentially in argument order**, returns the model. Optional first arg `SlothConnectOptions { signal?, timeoutMs?, connectionName?, clientProperties? }` bounds the connect+setup phase via `AbortSignal` and sets the broker-visible `connection_name`. `slothClose` closes it. Caller owns the connection.
 - **`abort.ts`** — `combineAbort` composes `signal` + `timeoutMs` via `AbortSignal.any`. `raceWithAbort` races a promise against the signal with loser-cleanup support (closes resources that resolve after abort to avoid leaks). `safeClose` helper that calls `.close()` and swallows errors. Used by `connection.ts`, `listener.ts`, and `ping.ts`.
 - **`ping.ts`** — `ping(client, opts?)` opens a temporary channel, runs `checkExchange` against the Sloth request exchange, and closes. Suitable for k8s readiness/liveness probes. Accepts `signal` / `timeoutMs` / `logger`.
 - **`sender.ts`** — `createDelaySender(client)` returns a `DelaySender` object with an async `send<TData>(params)` method. Publishes to `sloth.direct.exchange.request` with routing key `delay`, headers `delay-until` (unix seconds) and `target` (`amqp://<service>/<key>`), body `JSON.stringify(data)`. Caches a single `ConfirmChannel` for the factory's lifetime, asserts the exchange once on first use, and re-creates the channel transparently on broker `error`/`close`. `send` resolves only after the broker confirms the publish; a broker nack rejects the promise.
@@ -101,15 +101,15 @@ These constants are not configurable — they're part of the wire contract with 
 
 Anything exported from `src/index.ts` is part of the published API. Treat changes there as breaking until the package reaches 1.0:
 
-- `slothConnect`, `slothClose` — `slothConnect` accepts optional `SlothConnectOptions { signal?, timeoutMs? }`
+- `slothConnect`, `slothClose` — `slothConnect` accepts optional `SlothConnectOptions { signal?, timeoutMs?, connectionName?, clientProperties? }`
 - `createDelaySender` — returns a `DelaySender { send<TData>(params): Promise<void> }`
 - `setupDelayedMessageListener` — returns `SlothListenerHandle { consumerTag, close() }`. Accepts optional `signal` / `timeoutMs` on `SlothListenerOptions`.
 - `ping(client, opts?)` — health-check helper for k8s readiness probes
 - `MAX_DELAY_SECONDS`, `resolveDelaySeconds`, `sanitizeLabel`, `serializeData` — pure helpers exposed for callers that want to validate input ahead of `send`
 - `DelaySender` — interface returned by `createDelaySender`
 - `NoOpLogger`, `consoleLogger`, `withLogLevel`
-- `SlothConfig`, `assertSafeSlothConfig`, `getSlothQueueName`, `getSlothTarget`
-- `slothRequestExchangeName`, `slothResponseExchangeName`, `defaultListenerQueueExpiresMs`
+- `SlothConfig`, `assertSafeSlothConfig`, `getSlothQueueName`, `getSlothTarget`, `slothClientProperties`
+- `slothRequestExchangeName`, `slothResponseExchangeName`, `defaultListenerQueueExpiresMs`, `defaultListenerPrefetch`
 - Types: `SlothLogger`, `SlothLogLevel`, `DelaySpec`, `SendDelayMessageParams<TData>`, `SlothListenerOptions`, `SlothListenerHandle`, `SlothSetup`, `SlothConnectOptions`, `PingOptions`
 
 ### Stable log event names

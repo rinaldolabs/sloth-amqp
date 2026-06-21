@@ -161,6 +161,39 @@ describe('slothConnect', () => {
     expect(setup).toHaveBeenCalledTimes(1);
   });
 
+  it('passes connectionName as clientProperties.connection_name', async () => {
+    const { slothConnect } = await import('../connection.js');
+    await slothConnect('amqp://localhost', { connectionName: 'svc:sloth-amqp@pod-1' });
+    expect(mockConnect).toHaveBeenCalledWith('amqp://localhost', {
+      clientProperties: { connection_name: 'svc:sloth-amqp@pod-1' },
+    });
+  });
+
+  it('merges clientProperties and lets connectionName win over a connection_name key', async () => {
+    const { slothConnect } = await import('../connection.js');
+    await slothConnect('amqp://localhost', {
+      connectionName: 'explicit',
+      clientProperties: { connection_name: 'ignored', product: 'my-app' },
+    });
+    expect(mockConnect).toHaveBeenCalledWith('amqp://localhost', {
+      clientProperties: { connection_name: 'explicit', product: 'my-app' },
+    });
+  });
+
+  it('passes clientProperties even without connectionName', async () => {
+    const { slothConnect } = await import('../connection.js');
+    await slothConnect('amqp://localhost', { clientProperties: { product: 'my-app' } });
+    expect(mockConnect).toHaveBeenCalledWith('amqp://localhost', {
+      clientProperties: { product: 'my-app' },
+    });
+  });
+
+  it('calls connect with only the URL when no client properties are set', async () => {
+    const { slothConnect } = await import('../connection.js');
+    await slothConnect('amqp://localhost', { timeoutMs: 5_000 });
+    expect(mockConnect).toHaveBeenCalledWith('amqp://localhost');
+  });
+
   it('swallows errors from the loser-cleanup close() call', async () => {
     const { slothConnect } = await import('../connection.js');
     const ac = new AbortController();

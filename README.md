@@ -280,6 +280,26 @@ const client = await slothConnect(process.env.AMQP_URL, async (conn) => {
 });
 ```
 
+### Connection naming
+
+Pass `connectionName` (or arbitrary `clientProperties`) so the connection is identifiable in RabbitMQ's management UI and `rabbitmqctl list_connections` — handy for spotting which service, pod, or version owns a connection:
+
+```ts
+import { slothConnect, slothClientProperties } from '@rinaldolabs/sloth-amqp';
+
+// Explicit name:
+const client = await slothConnect(process.env.AMQP_URL, {
+  connectionName: 'orders-worker@pod-7',
+});
+
+// Or the helper default — `<serviceName>:sloth-amqp@<hostname>`:
+const client2 = await slothConnect(process.env.AMQP_URL, {
+  clientProperties: slothClientProperties({ serviceName: 'orders-worker' }),
+});
+```
+
+`connectionName` is sent as `clientProperties.connection_name` and takes precedence over any `connection_name` in `clientProperties`. Do not put the AMQP URL, credentials, or other secrets in `clientProperties` — they are visible in the broker's management UI. The default hostname is a pod/task id in container environments but may be a personal machine name locally; pass an explicit `connectionName` when that matters.
+
 ## Public exports
 
 Everything below is re-exported from the package root.

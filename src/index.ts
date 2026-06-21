@@ -22,9 +22,11 @@ export type {
 } from './types.js';
 export {
   assertSafeSlothConfig,
+  defaultListenerPrefetch,
   defaultListenerQueueExpiresMs,
   getSlothQueueName,
   getSlothTarget,
+  slothClientProperties,
   slothRequestExchangeName,
   slothResponseExchangeName,
 } from './utils.js';

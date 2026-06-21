@@ -21,6 +21,21 @@ export interface SlothConnectOptions {
   signal?: AbortSignal;
   /** Convenience timeout — equivalent to passing `AbortSignal.timeout(ms)`. */
   timeoutMs?: number;
+  /**
+   * Human-readable name shown in RabbitMQ's management UI and
+   * `rabbitmqctl list_connections`. Sent as `clientProperties.connection_name`.
+   * Use it to identify which service/pod/version owns a connection. Avoid PII;
+   * `slothClientProperties` builds a sensible `<serviceName>:sloth-amqp@<host>`
+   * default. Takes precedence over a `connection_name` in `clientProperties`.
+   */
+  connectionName?: string;
+  /**
+   * Extra AMQP client properties merged into the connection's
+   * `clientProperties` (advertised to the broker on handshake). Do not put the
+   * AMQP URL, credentials, or other secrets here — these are visible in the
+   * broker's management UI.
+   */
+  clientProperties?: Record<string, unknown>;
 }
 
 const isOptions = (v: unknown): v is SlothConnectOptions =>
@@ -62,10 +77,24 @@ export async function slothConnect(
   // socket only to tear it down.
   if (signal?.aborted) throw signal.reason as unknown;
 
+  // Merge connection_name into clientProperties so the connection is
+  // identifiable in RabbitMQ's management UI. Only build socketOptions when the
+  // caller asked for something — otherwise pass nothing and keep the bare
+  // connect path unchanged.
+  const clientProperties: Record<string, unknown> = { ...options.clientProperties };
+  if (options.connectionName !== undefined) {
+    clientProperties['connection_name'] = options.connectionName;
+  }
+  const socketOptions = Object.keys(clientProperties).length > 0 ? { clientProperties } : undefined;
+
   // amqplib has no native AbortSignal support, so we race. If the signal
   // wins, the connect promise may still resolve later with an open socket;
   // `safeClose` ensures it gets closed instead of leaking.
-  const client = await raceWithAbort(amqp.connect(url), signal, safeClose);
+  const client = await raceWithAbort(
+    socketOptions ? amqp.connect(url, socketOptions) : amqp.connect(url),
+    signal,
+    safeClose,
+  );
 
   // Run setups sequentially in argument order. They share one ChannelModel,
   // so a later setup may depend on a resource an earlier one declared (e.g.
