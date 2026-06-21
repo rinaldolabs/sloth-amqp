@@ -71,7 +71,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "lint:lockfile": "lockfile-lint",
-    "lint:packaging": "publint && attw --pack",
+    "lint:packaging": "publint && attw --pack --profile node16",
     "size": "size-limit",
     "size:why": "size-limit --why",
     "sbom": "cyclonedx-npm --output-file sbom.json",
