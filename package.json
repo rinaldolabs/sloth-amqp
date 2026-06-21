@@ -64,6 +64,7 @@
   "scripts": {
     "build": "tsup",
     "type-check": "tsc --noEmit",
+    "type-check:examples": "tsc -p examples/tsconfig.json --noEmit",
     "test": "vitest",
     "test-once": "vitest --watch=false",
     "test:integration": "vitest run --config vitest.integration.config.ts",

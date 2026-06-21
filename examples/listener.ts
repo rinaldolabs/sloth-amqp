@@ -5,23 +5,7 @@
 //
 // On Node 24, type stripping is enabled by default for erasable TypeScript syntax.
 
-import { setupDelayedMessageListener, type SlothLogger } from '../src/index.ts';
-
-const consoleLogger: SlothLogger = {
-  info: (msg) => {
-    console.log(msg);
-  },
-  warn: (msg) => {
-    console.warn(msg);
-  },
-  error: (msg) => {
-    console.error(msg);
-  },
-  debug: (msg) => {
-    console.debug(msg);
-  },
-  child: () => consoleLogger,
-};
+import { consoleLogger, setupDelayedMessageListener } from '../src/index.ts';
 
 const amqpUrl = process.env['AMQP_URL'];
 if (!amqpUrl) {
