@@ -87,7 +87,7 @@ These constants are not configurable — they're part of the wire contract with 
 - Exactly one of `delayMinutes` / `delaySeconds` / `delayUntil` must be provided per send. `delayMinutes` and `delaySeconds` must be positive and finite; `delayUntil` must be a valid `Date`. All variants are capped at `MAX_DELAY_SECONDS` (~100 years) to prevent unix-timestamp overflow
 - `logLabel` is sanitized via `sanitizeLabel` (strips ASCII controls, NEL, U+2028, U+2029; truncated to 200 grapheme clusters) before being written to log lines
 - `data` is JSON-serialized once via `serializeData` before the channel opens; non-serializable values throw before any AMQP work
-- All cleanup/error paths route through the injected `SlothLogger`, never `console`
+- All cleanup/error paths route through the injected `SlothLogger`, never `console`. The one sanctioned `console.*` in `src/` is the exported `consoleLogger` shim (`src/logger.ts`) — an explicit opt-in for scripts/demos, never the default and never used internally
 
 ## Dependency policy
 
