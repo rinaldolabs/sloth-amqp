@@ -66,9 +66,9 @@ describe('slothConnect', () => {
     const { slothConnect } = await import('../connection.js');
     const ac = new AbortController();
     ac.abort(new Error('pre-aborted'));
-    await expect(
-      slothConnect('amqp://localhost', { signal: ac.signal }),
-    ).rejects.toThrow('pre-aborted');
+    await expect(slothConnect('amqp://localhost', { signal: ac.signal })).rejects.toThrow(
+      'pre-aborted',
+    );
     // amqp.connect should never have been called.
     expect(mockConnect).not.toHaveBeenCalled();
   });

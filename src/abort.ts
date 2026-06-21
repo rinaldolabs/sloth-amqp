@@ -68,9 +68,7 @@ export const raceWithAbort = async <T>(
   if (!signal) return promise;
   if (signal.aborted) {
     // Swallow loser so a later rejection doesn't surface as unhandled.
-    promise
-      .then((value) => onLoserSettle?.(value))
-      .catch(() => undefined);
+    promise.then((value) => onLoserSettle?.(value)).catch(() => undefined);
     throw signal.reason as unknown;
   }
 
@@ -91,9 +89,7 @@ export const raceWithAbort = async <T>(
     // Abort won: the input promise is still pending. Swallow its eventual
     // rejection (no unhandledRejection) and hand a successful resolution to
     // the caller's cleanup hook so any acquired resource can be released.
-    promise
-      .then((value) => onLoserSettle?.(value))
-      .catch(() => undefined);
+    promise.then((value) => onLoserSettle?.(value)).catch(() => undefined);
     throw error;
   } finally {
     signal.removeEventListener('abort', listener);

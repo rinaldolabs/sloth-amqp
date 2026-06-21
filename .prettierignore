@@ -1,0 +1,8 @@
+# Build output and coverage — generated, not hand-edited
+dist/
+coverage/
+
+# Generated / machine-managed files manage their own formatting
+package-lock.json
+sbom.json
+CHANGELOG.md

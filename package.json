@@ -71,12 +71,14 @@
     "coverage": "vitest run --coverage",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "lint:lockfile": "lockfile-lint",
     "lint:packaging": "publint && attw --pack --profile node16",
     "size": "size-limit",
     "size:why": "size-limit --why",
     "sbom": "cyclonedx-npm --output-file sbom.json",
-    "prepublishOnly": "npm run lint && npm run type-check && npm run build && npm run lint:packaging && npm run size && npm run coverage"
+    "prepublishOnly": "npm run lint && npm run format:check && npm run type-check && npm run build && npm run lint:packaging && npm run size && npm run coverage"
   },
   "keywords": [
     "amqp",

@@ -707,7 +707,9 @@ describe('createDelaySender', () => {
     });
 
     const opts = mockPublish.mock.calls[0]?.[3] as { messageId?: string };
-    expect(opts.messageId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(opts.messageId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
   });
 
   it('uses caller-supplied messageId verbatim', async () => {
@@ -765,7 +767,9 @@ describe('createDelaySender', () => {
     });
 
     const opts = mockPublish.mock.calls[0]?.[3] as { headers: Record<string, unknown> };
-    expect(opts.headers['traceparent']).toBe('00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01');
+    expect(opts.headers['traceparent']).toBe(
+      '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01',
+    );
     expect(opts.headers['tracestate']).toBe('congo=t61rcWkgMzE');
     // Reserved headers still present and not overwritten.
     expect(opts.headers['delay-until']).toBe(FIXED_NOW_SEC + 60);

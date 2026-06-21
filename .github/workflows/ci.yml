@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
   lint:
-    name: ESLint
+    name: ESLint + Prettier
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -21,6 +21,7 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run lint
+      - run: npm run format:check
       - run: npm run lint:lockfile
       - name: Validate renovate.json
         run: npx --yes --package renovate -- renovate-config-validator --strict

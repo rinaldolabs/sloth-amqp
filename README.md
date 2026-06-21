@@ -74,10 +74,10 @@ await send({ data, config, logger, delayUntil: new Date('2030-01-01T00:00:00Z') 
 
 Optional fields on every variant:
 
-| Field      | Type           | Notes                                                                                                                  |
-| ---------- | -------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `logLabel` | `string`       | Human-readable identifier used in log lines. Sanitized (control chars stripped, capped at 200 grapheme clusters). |
-| `logLevel` | `SlothLogLevel` | Minimum level for **this library's** log calls. The caller's logger is otherwise unchanged.                            |
+| Field      | Type            | Notes                                                                                                             |
+| ---------- | --------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `logLabel` | `string`        | Human-readable identifier used in log lines. Sanitized (control chars stripped, capped at 200 grapheme clusters). |
+| `logLevel` | `SlothLogLevel` | Minimum level for **this library's** log calls. The caller's logger is otherwise unchanged.                       |
 
 All variants are validated before any AMQP work happens: positive and finite numbers, valid `Date`, capped at ~100 years (`MAX_DELAY_SECONDS`). A `delayUntil` in the past is logged at `warn` and still published — Sloth will deliver immediately, matching the upstream Go client's behavior. If you set `logLevel: 'error'` (or wrap with `withLogLevel(..., 'error')`), this warning is suppressed; use `'warn'` or lower if you want to see past-date schedules.
 
@@ -105,10 +105,10 @@ process.on('SIGINT', () => void handle.close());
 
 Optional fields on `setupDelayedMessageListener`:
 
-| Field            | Type     | Default  | Notes                                                                                                                                                       |
-| ---------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `queueExpiresMs` | `number` | 5 days   | Auto-expiry for the response queue when no consumer is connected (`x-expires`). Must be positive and finite.                                                |
-| `prefetch`       | `number` | `20`     | Consumer prefetch (QoS) — max unacknowledged messages delivered at once. Sloth re-delivers in bursts, so a bounded window caps memory. `0` = unlimited. Must be a non-negative integer. |
+| Field            | Type     | Default | Notes                                                                                                                                                                                   |
+| ---------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queueExpiresMs` | `number` | 5 days  | Auto-expiry for the response queue when no consumer is connected (`x-expires`). Must be positive and finite.                                                                            |
+| `prefetch`       | `number` | `20`    | Consumer prefetch (QoS) — max unacknowledged messages delivered at once. Sloth re-delivers in bursts, so a bounded window caps memory. `0` = unlimited. Must be a non-negative integer. |
 
 ### Health checks
 
@@ -162,23 +162,23 @@ The headers `delay-until` and `target` are reserved by the Sloth wire protocol �
 
 Every log call from this package emits an object-first second argument with a stable `event` name plus context fields. The names below are part of the public contract — renames are breaking changes.
 
-| Event | Level | Where | Context fields |
-| ----- | ----- | ----- | -------------- |
-| `sloth.publish.scheduling` | debug | sender | `serviceName`, `routingKey`, `messageId`, `correlationId`, `delayDesc` |
-| `sloth.publish.confirmed` | info | sender | + `durationMs` |
-| `sloth.publish.back_pressured` | warn | sender | `serviceName`, `routingKey`, `messageId` |
-| `sloth.publish.failed` | error | sender | + `durationMs`, `reason` |
-| `sloth.publish.past_date_warning` | warn | sender | `serviceName`, `routingKey` |
-| `sloth.listener.setup_started` | debug | listener | `serviceName`, `routingKey` |
-| `sloth.listener.ready` | info | listener | + `queueName`, `consumerTag` |
-| `sloth.listener.handler_failed` | error | listener | + `messageId`, `correlationId`, `reason` |
-| `sloth.listener.unexpected_message` | error | listener | + `messageId`, `correlationId` |
-| `sloth.listener.channel_error` | error | listener | + `reason` |
-| `sloth.listener.channel_closed` | warn | listener | `serviceName`, `routingKey` |
-| `sloth.listener.consumer_cancel_failed` | error | listener | + `consumerTag`, `reason` |
-| `sloth.listener.resources_release_failed` | error | listener | + `reason` |
-| `sloth.listener.setup_failed` | error | listener | + `reason` |
-| `sloth.ping.failed` | error | ping | `reason` |
+| Event                                     | Level | Where    | Context fields                                                         |
+| ----------------------------------------- | ----- | -------- | ---------------------------------------------------------------------- |
+| `sloth.publish.scheduling`                | debug | sender   | `serviceName`, `routingKey`, `messageId`, `correlationId`, `delayDesc` |
+| `sloth.publish.confirmed`                 | info  | sender   | + `durationMs`                                                         |
+| `sloth.publish.back_pressured`            | warn  | sender   | `serviceName`, `routingKey`, `messageId`                               |
+| `sloth.publish.failed`                    | error | sender   | + `durationMs`, `reason`                                               |
+| `sloth.publish.past_date_warning`         | warn  | sender   | `serviceName`, `routingKey`                                            |
+| `sloth.listener.setup_started`            | debug | listener | `serviceName`, `routingKey`                                            |
+| `sloth.listener.ready`                    | info  | listener | + `queueName`, `consumerTag`                                           |
+| `sloth.listener.handler_failed`           | error | listener | + `messageId`, `correlationId`, `reason`                               |
+| `sloth.listener.unexpected_message`       | error | listener | + `messageId`, `correlationId`                                         |
+| `sloth.listener.channel_error`            | error | listener | + `reason`                                                             |
+| `sloth.listener.channel_closed`           | warn  | listener | `serviceName`, `routingKey`                                            |
+| `sloth.listener.consumer_cancel_failed`   | error | listener | + `consumerTag`, `reason`                                              |
+| `sloth.listener.resources_release_failed` | error | listener | + `reason`                                                             |
+| `sloth.listener.setup_failed`             | error | listener | + `reason`                                                             |
+| `sloth.ping.failed`                       | error | ping     | `reason`                                                               |
 
 ### Cancellation and timeouts
 
@@ -186,11 +186,11 @@ Both `slothConnect` and `setupDelayedMessageListener` accept an optional `signal
 
 The reason depends on what fired:
 
-| Source | Resulting `signal.reason` |
-| ------ | ------------------------- |
-| `AbortSignal.timeout(ms)` | `DOMException` with `name === 'TimeoutError'` |
-| `controller.abort()` (no argument) | `DOMException` with `name === 'AbortError'` |
-| `controller.abort(reason)` | `reason` as-is — `Error`, string, or any value the caller passes |
+| Source                             | Resulting `signal.reason`                                        |
+| ---------------------------------- | ---------------------------------------------------------------- |
+| `AbortSignal.timeout(ms)`          | `DOMException` with `name === 'TimeoutError'`                    |
+| `controller.abort()` (no argument) | `DOMException` with `name === 'AbortError'`                      |
+| `controller.abort(reason)`         | `reason` as-is — `Error`, string, or any value the caller passes |
 
 ```ts
 import { slothConnect, setupDelayedMessageListener } from '@rinaldolabs/sloth-amqp';
@@ -239,14 +239,14 @@ The cancellation window covers connect + handshake + setup. After the operation 
 
 Any object satisfying `SlothLogger` works. `child()` is **optional** — loggers that don't support contextual children (`console`, `@nestjs/common` Logger, electron-log, etc.) can omit it. The package never relies on `child()` internally; `withLogLevel` only proxies it when the wrapped logger has it.
 
-| Logger | How to pass it |
-| ------ | -------------- |
-| **winston** | `logger` directly — `winston.Logger` is structurally compatible |
-| **pino** | `logger` directly — `pino.Logger` is structurally compatible |
-| **bunyan** | `logger` directly |
-| **console** | Use the exported `consoleLogger` |
+| Logger                      | How to pass it                                                                          |
+| --------------------------- | --------------------------------------------------------------------------------------- |
+| **winston**                 | `logger` directly — `winston.Logger` is structurally compatible                         |
+| **pino**                    | `logger` directly — `pino.Logger` is structurally compatible                            |
+| **bunyan**                  | `logger` directly                                                                       |
+| **console**                 | Use the exported `consoleLogger`                                                        |
 | **`@nestjs/common` Logger** | Wrap (signature is `(message, context?)`, not `(message, ...meta)`) — see snippet below |
-| Custom | Implement `info / warn / error / debug` (and optionally `child`) |
+| Custom                      | Implement `info / warn / error / debug` (and optionally `child`)                        |
 
 ```ts
 import { consoleLogger, NoOpLogger } from '@rinaldolabs/sloth-amqp';
@@ -288,12 +288,12 @@ Everything below is re-exported from the package root.
 
 ```ts
 import {
-  slothRequestExchangeName,        // "sloth.direct.exchange.request"
-  slothResponseExchangeName,       // "sloth.headers.exchange.response"
-  defaultListenerQueueExpiresMs,   // 5 days, in ms
-  getSlothQueueName,               // (config) => "sloth.headers.exchange.response.queue.<serviceName>"
-  getSlothTarget,                  // (config) => "amqp://<serviceName>/<routingKey>"
-  assertSafeSlothConfig,           // throws if serviceName/routingKey contain unsafe chars
+  slothRequestExchangeName, // "sloth.direct.exchange.request"
+  slothResponseExchangeName, // "sloth.headers.exchange.response"
+  defaultListenerQueueExpiresMs, // 5 days, in ms
+  getSlothQueueName, // (config) => "sloth.headers.exchange.response.queue.<serviceName>"
+  getSlothTarget, // (config) => "amqp://<serviceName>/<routingKey>"
+  assertSafeSlothConfig, // throws if serviceName/routingKey contain unsafe chars
 } from '@rinaldolabs/sloth-amqp';
 ```
 
@@ -301,10 +301,10 @@ import {
 
 ```ts
 import {
-  MAX_DELAY_SECONDS,        // ~100 years in seconds
-  resolveDelaySeconds,      // (DelaySpec) => { delayUntilUnix, delayDesc, pastDateWarning? }
-  sanitizeLabel,            // (raw) => safe single-line string, max 200 grapheme clusters
-  serializeData,            // (data) => Buffer; throws on non-JSON-serializable input
+  MAX_DELAY_SECONDS, // ~100 years in seconds
+  resolveDelaySeconds, // (DelaySpec) => { delayUntilUnix, delayDesc, pastDateWarning? }
+  sanitizeLabel, // (raw) => safe single-line string, max 200 grapheme clusters
+  serializeData, // (data) => Buffer; throws on non-JSON-serializable input
 } from '@rinaldolabs/sloth-amqp';
 ```
 
@@ -325,21 +325,21 @@ import type {
 
 ## Why this and not …
 
-| Capability | `@rinaldolabs/sloth-amqp` | `amqplib` raw | `amqp-connection-manager` | `bullmq` |
-| ---------- | ------------------------- | ------------- | ------------------------- | -------- |
-| Sloth wire protocol (delayed messages over AMQP) | ✅ first-class | ❌ build it yourself | ❌ build it yourself | ❌ different system |
-| Confirm-channel publish with broker ack | ✅ auto | manual | ✅ | n/a |
-| Auto-recreate channel on broker error/close | ✅ | manual | ✅ | n/a |
-| `AbortSignal` + `timeoutMs` on connect/setup | ✅ verbatim WHATWG reasons | ❌ | ❌ | partial |
-| `messageId` auto-UUID + `correlationId` propagation | ✅ | manual | manual | ✅ |
-| W3C trace-context (`traceparent`) header passthrough | ✅ via `headers` | manual | manual | partial |
-| Health-check helper (`ping`) | ✅ | manual | manual | n/a |
-| Dual ESM + CJS published | ✅ | ✅ | ✅ | ✅ |
-| Built-in TypeScript types (no `@types/*`) | ✅ | ✅ | ✅ | ✅ |
-| Zero runtime dependencies | ✅ (amqplib is a peer dep) | n/a | adds reconnect-core | many |
-| Object-first structured log events | ✅ stable contract | n/a | n/a | partial |
-| Bundle size (minified+brotli) | ~3 KB per format | n/a | larger | much larger |
-| npm provenance (Sigstore) | ✅ | varies | varies | varies |
+| Capability                                           | `@rinaldolabs/sloth-amqp`  | `amqplib` raw        | `amqp-connection-manager` | `bullmq`            |
+| ---------------------------------------------------- | -------------------------- | -------------------- | ------------------------- | ------------------- |
+| Sloth wire protocol (delayed messages over AMQP)     | ✅ first-class             | ❌ build it yourself | ❌ build it yourself      | ❌ different system |
+| Confirm-channel publish with broker ack              | ✅ auto                    | manual               | ✅                        | n/a                 |
+| Auto-recreate channel on broker error/close          | ✅                         | manual               | ✅                        | n/a                 |
+| `AbortSignal` + `timeoutMs` on connect/setup         | ✅ verbatim WHATWG reasons | ❌                   | ❌                        | partial             |
+| `messageId` auto-UUID + `correlationId` propagation  | ✅                         | manual               | manual                    | ✅                  |
+| W3C trace-context (`traceparent`) header passthrough | ✅ via `headers`           | manual               | manual                    | partial             |
+| Health-check helper (`ping`)                         | ✅                         | manual               | manual                    | n/a                 |
+| Dual ESM + CJS published                             | ✅                         | ✅                   | ✅                        | ✅                  |
+| Built-in TypeScript types (no `@types/*`)            | ✅                         | ✅                   | ✅                        | ✅                  |
+| Zero runtime dependencies                            | ✅ (amqplib is a peer dep) | n/a                  | adds reconnect-core       | many                |
+| Object-first structured log events                   | ✅ stable contract         | n/a                  | n/a                       | partial             |
+| Bundle size (minified+brotli)                        | ~3 KB per format           | n/a                  | larger                    | much larger         |
+| npm provenance (Sigstore)                            | ✅                         | varies               | varies                    | varies              |
 
 `amqplib` is a peer dependency, not a competitor — this package is a thin layer on top. The comparison is for "what can I drop in without rebuilding the same wheels every consumer of `amqplib` builds."
 
@@ -349,9 +349,9 @@ Implements the Sloth AMQP protocol as defined by the upstream [`amqp` source plu
 
 Headers sent with each delayed message:
 
-| Header        | Type                   | Description                                                |
-| ------------- | ---------------------- | ---------------------------------------------------------- |
-| `delay-until` | `int64` (unix seconds) | When to deliver the message                                |
+| Header        | Type                   | Description                                               |
+| ------------- | ---------------------- | --------------------------------------------------------- |
+| `delay-until` | `int64` (unix seconds) | When to deliver the message                               |
 | `target`      | `string` (AMQP URL)    | Response destination: `amqp://<serviceName>/<routingKey>` |
 
 ## Compared to the Go client

@@ -54,7 +54,9 @@
       "description": "Track the RabbitMQ image used in integration tests",
       "customType": "regex",
       "managerFilePatterns": ["/^test/integration/.*\\.test\\.ts$/"],
-      "matchStrings": ["GenericContainer\\(['\"](?<depName>[a-z0-9-]+):(?<currentValue>[^'\"]+)['\"]\\)"],
+      "matchStrings": [
+        "GenericContainer\\(['\"](?<depName>[a-z0-9-]+):(?<currentValue>[^'\"]+)['\"]\\)"
+      ],
       "datasourceTemplate": "docker"
     }
   ],
