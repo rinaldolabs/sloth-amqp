@@ -34,16 +34,6 @@
     },
     {
       "customType": "regex",
-      "managerFilePatterns": ["/^package\\.json$/"],
-      "matchStrings": [
-        "\"engines\"\\s*:\\s*\\{[^}]*\"node\"\\s*:\\s*\"\\^(?<currentValue>\\d+\\.\\d+\\.\\d+)\"[^}]*\\}"
-      ],
-      "depNameTemplate": "node",
-      "datasourceTemplate": "node-version",
-      "versioningTemplate": "node"
-    },
-    {
-      "customType": "regex",
       "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
       "matchStrings": ["node-version:\\s*'(?<currentValue>\\d+\\.\\d+\\.\\d+)'"],
       "depNameTemplate": "node",
@@ -62,7 +52,7 @@
   ],
   "packageRules": [
     {
-      "description": "Node runtime: .nvmrc + engines + CI in one PR",
+      "description": "Node runtime: .nvmrc + CI + @types/node in one PR (engines is a floor, not tracked)",
       "groupName": "Node runtime (all files)",
       "matchManagers": ["custom.regex", "npm"],
       "matchDatasources": ["node-version", "npm"],
