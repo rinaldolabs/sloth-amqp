@@ -10,12 +10,12 @@ module.exports = [
     name: 'ESM',
     path: 'dist/index.js',
     limit: '6 KB',
-    ignore: ['amqplib', 'crypto', 'node:crypto'],
+    ignore: ['amqplib', 'crypto', 'node:crypto', 'os', 'node:os'],
   },
   {
     name: 'CJS',
     path: 'dist/index.cjs',
     limit: '6 KB',
-    ignore: ['amqplib', 'crypto', 'node:crypto'],
+    ignore: ['amqplib', 'crypto', 'node:crypto', 'os', 'node:os'],
   },
 ];
