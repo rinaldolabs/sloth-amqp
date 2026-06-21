@@ -294,6 +294,31 @@ describe('setupDelayedMessageListener', () => {
     await handle.close();
   });
 
+  it('nacks and logs an unexpected message with no content buffer', async () => {
+    const setupFn = await setup();
+    const onMessage = vi.fn();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage,
+      logger: mockLogger,
+    });
+
+    const consumeCallback = mockChannel.consume.mock.calls[0]?.[1] as (msg: unknown) => void;
+    // content is not a Buffer — a structurally-unusable delivery.
+    const badMsg = { content: 'not-a-buffer', properties: { messageId: 'm-1' } };
+    consumeCallback(badMsg);
+
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(mockChannelNack).toHaveBeenCalledWith(badMsg, false, false);
+    expect(mockChannelAck).not.toHaveBeenCalled();
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('unexpected message'),
+      expect.objectContaining({ event: 'sloth.listener.unexpected_message', messageId: 'm-1' }),
+    );
+    await handle.close();
+  });
+
   it('logs channel errors via error event', async () => {
     const setupFn = await setup();
     const handle = await setupFn({

@@ -125,7 +125,23 @@ export async function setupDelayedMessageListener({
       channel.consume(
         queueName,
         (message) => {
+          // null = broker cancelled this consumer server-side; nothing to ack.
           if (!message) return;
+          // Defend the handler against a structurally-unusable delivery (no
+          // content Buffer to read). Route it to the DLX rather than letting
+          // onMessage throw on message.content.toString() — that would surface
+          // as handler_failed and wrongly implicate the caller's handler.
+          if (!Buffer.isBuffer(message.content)) {
+            logger.error('sloth: unexpected message (missing content buffer)', {
+              event: 'sloth.listener.unexpected_message',
+              serviceName: config.serviceName,
+              routingKey: config.routingKey,
+              messageId: message.properties.messageId as string | undefined,
+              correlationId: message.properties.correlationId as string | undefined,
+            });
+            channel?.nack(message, false, false);
+            return;
+          }
           onMessage(message)
             .then(() => {
               channel?.ack(message);
