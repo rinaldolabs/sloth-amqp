@@ -109,10 +109,13 @@ process.on('SIGINT', () => void handle.close());
 
 Optional fields on `setupDelayedMessageListener`:
 
-| Field            | Type     | Default | Notes                                                                                                                                                                                   |
-| ---------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `queueExpiresMs` | `number` | 5 days  | Auto-expiry for the response queue when no consumer is connected (`x-expires`). Must be positive and finite.                                                                            |
-| `prefetch`       | `number` | `20`    | Consumer prefetch (QoS) — max unacknowledged messages delivered at once. Sloth re-delivers in bursts, so a bounded window caps memory. `0` = unlimited. Must be a non-negative integer. |
+| Field            | Type     | Default | Notes                                                                                                                                                                                        |
+| ---------------- | -------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queueExpiresMs` | `number` | 5 days  | Auto-expiry for the response queue when no consumer is connected (`x-expires`). Must be positive and finite.                                                                                 |
+| `prefetch`       | `number` | `20`    | Consumer prefetch (QoS) — max unacknowledged messages delivered at once. Sloth re-delivers in bursts, so a bounded window caps memory. `0` = unlimited. Must be a non-negative integer.      |
+| `graceTimeoutMs` | `number` | `10000` | How long `handle.close()` waits for in-flight `onMessage` handlers to settle (after cancelling the consumer) before closing the channel. `0` skips the wait. Must be a non-negative integer. |
+
+> **Shutdown & at-least-once.** `handle.close()` cancels the consumer (no new deliveries), waits up to `graceTimeoutMs` for in-flight handlers to finish, then closes the channel and connection. A clean drain avoids the broker requeuing messages a handler was mid-way through — but if a handler is still running when the grace period elapses (or you set `graceTimeoutMs: 0`), its message is requeued and redelivered (`redelivered: true`) on next connect. Delivery is at-least-once either way, so handlers must be idempotent.
 
 ### Health checks
 

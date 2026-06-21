@@ -119,6 +119,16 @@ export interface SlothListenerOptions {
   timeoutMs?: number;
   /** Opt-in tap on each inbound message's bytes. See {@link OnWireMessage}. */
   onWireMessage?: OnWireMessage;
+  /**
+   * Max time `handle.close()` waits for in-flight `onMessage` handlers to
+   * settle after cancelling the consumer, before closing the channel. Defaults
+   * to `10_000` (10s). A clean drain avoids the broker requeuing
+   * still-processing messages (which would redeliver them with
+   * `redelivered: true` on next connect). Delivery is at-least-once regardless,
+   * so handlers must be idempotent. Must be a non-negative integer; `0` skips
+   * the wait.
+   */
+  graceTimeoutMs?: number;
 }
 
 export interface SlothListenerHandle {

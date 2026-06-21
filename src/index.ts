@@ -34,6 +34,7 @@ export type {
 } from './types.js';
 export {
   assertSafeSlothConfig,
+  defaultListenerGraceTimeoutMs,
   defaultListenerPrefetch,
   defaultListenerQueueExpiresMs,
   getSlothQueueName,

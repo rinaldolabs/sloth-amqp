@@ -14,6 +14,11 @@ export const defaultListenerQueueExpiresMs = 5 * 24 * 60 * 60 * 1000;
 // between pipelining and bounded unacked messages. Override per-listener.
 export const defaultListenerPrefetch = 20;
 
+// Default grace period (ms) for handle.close() to drain in-flight handlers
+// before closing the channel. 10s sits comfortably under a typical k8s
+// terminationGracePeriodSeconds (30s) with margin for the connection close.
+export const defaultListenerGraceTimeoutMs = 10_000;
+
 // SlothConfig mirrors the Go client's New(serviceName, amqpURL, ...mappings) signature:
 // serviceName and routingKey are mandatory — the Sloth server uses them to route the response
 // back to the correct queue. gitlab.com/unboundsoftware/sloth/client-amqp/client.go

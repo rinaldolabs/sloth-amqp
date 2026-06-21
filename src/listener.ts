@@ -5,6 +5,7 @@ import { NoOpLogger, resolveLogger } from './logger.js';
 import type { SlothListenerHandle, SlothListenerOptions } from './types.js';
 import {
   assertSafeSlothConfig,
+  defaultListenerGraceTimeoutMs,
   defaultListenerPrefetch,
   defaultListenerQueueExpiresMs,
   getSlothQueueName,
@@ -19,6 +20,7 @@ export async function setupDelayedMessageListener({
   onMessage,
   queueExpiresMs = defaultListenerQueueExpiresMs,
   prefetch = defaultListenerPrefetch,
+  graceTimeoutMs = defaultListenerGraceTimeoutMs,
   logLevel,
   signal: rawSignal,
   timeoutMs,
@@ -34,6 +36,9 @@ export async function setupDelayedMessageListener({
   if (!Number.isInteger(prefetch) || prefetch < 0) {
     throw new SlothValidationError('prefetch must be a non-negative integer');
   }
+  if (!Number.isInteger(graceTimeoutMs) || graceTimeoutMs < 0) {
+    throw new SlothValidationError('graceTimeoutMs must be a non-negative integer');
+  }
 
   const signal = combineAbort(rawSignal, timeoutMs);
   if (signal?.aborted) throw signal.reason as unknown;
@@ -48,6 +53,31 @@ export async function setupDelayedMessageListener({
 
   let connection: ChannelModel | null = null;
   let channel: Channel | null = null;
+  // Number of onMessage handlers currently executing. close() waits for this to
+  // reach 0 (bounded by graceTimeoutMs) after cancelling the consumer, so the
+  // broker doesn't requeue messages a handler was mid-way through.
+  let inFlight = 0;
+  // Resolvers parked by close() while it waits for in-flight handlers to drain;
+  // fired when inFlight returns to 0.
+  let drainWaiters: (() => void)[] = [];
+  const settleHandler = (): void => {
+    inFlight--;
+    if (inFlight === 0 && drainWaiters.length > 0) {
+      const waiters = drainWaiters;
+      drainWaiters = [];
+      for (const resolve of waiters) resolve();
+    }
+  };
+  const drain = (timeoutMs: number): Promise<void> => {
+    if (inFlight === 0 || timeoutMs === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, timeoutMs);
+      drainWaiters.push(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  };
 
   const closeResources = async (): Promise<void> => {
     try {
@@ -196,6 +226,7 @@ export async function setupDelayedMessageListener({
               ...(correlationId !== undefined && { correlationId }),
             };
           });
+          inFlight++;
           onMessage(message)
             .then(() => {
               safeAck(message);
@@ -211,6 +242,9 @@ export async function setupDelayedMessageListener({
               });
               // requeue=false: rely on a broker-configured DLX for retries.
               safeNack(message);
+            })
+            .finally(() => {
+              settleHandler();
             });
         },
         { noAck: false },
@@ -231,6 +265,8 @@ export async function setupDelayedMessageListener({
       close: async (): Promise<void> => {
         try {
           if (channel) {
+            // cancel() guarantees no further deliveries once it resolves, so
+            // after this only already-started handlers remain to drain.
             await channel.cancel(consumerTag);
           }
         } catch (error) {
@@ -242,6 +278,7 @@ export async function setupDelayedMessageListener({
             reason: errMessage(error),
           });
         }
+        await drain(graceTimeoutMs);
         await closeResources();
       },
     };

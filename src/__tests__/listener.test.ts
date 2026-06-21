@@ -165,6 +165,84 @@ describe('setupDelayedMessageListener', () => {
     expect(mockConnect).not.toHaveBeenCalled();
   });
 
+  it('rejects a non-integer graceTimeoutMs before any I/O', async () => {
+    const setupFn = await setup();
+    await expect(
+      setupFn({
+        amqpUrl: 'amqp://localhost',
+        config: testConfig,
+        onMessage: vi.fn(),
+        logger: mockLogger,
+        graceTimeoutMs: -1,
+      }),
+    ).rejects.toThrow('graceTimeoutMs must be a non-negative integer');
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
+
+  it('close() waits for an in-flight handler to settle before closing the channel', async () => {
+    const setupFn = await setup();
+    let resolveHandler!: () => void;
+    const onMessage = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveHandler = resolve;
+        }),
+    );
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage,
+      logger: mockLogger,
+    });
+
+    // Deliver a message — handler is now in flight (pending).
+    const consumeCallback = mockChannel.consume.mock.calls[0]?.[1] as (msg: unknown) => void;
+    consumeCallback({ content: Buffer.from('{}'), fields: {}, properties: {} });
+    await new Promise((r) => setImmediate(r));
+
+    // Start close(); it must not close the channel while the handler is pending.
+    const closing = handle.close();
+    await new Promise((r) => setImmediate(r));
+    expect(mockChannelClose).not.toHaveBeenCalled();
+
+    // Let the handler finish — close() can now proceed.
+    resolveHandler();
+    await closing;
+    expect(mockChannelAck).toHaveBeenCalled();
+    expect(mockChannelClose).toHaveBeenCalled();
+  });
+
+  it('close() stops waiting after graceTimeoutMs if a handler hangs', async () => {
+    vi.useFakeTimers();
+    try {
+      const setupFn = await setup();
+      const onMessage = vi.fn(() => new Promise<void>(() => {})); // never settles
+      const handle = await setupFn({
+        amqpUrl: 'amqp://localhost',
+        config: testConfig,
+        onMessage,
+        logger: mockLogger,
+        graceTimeoutMs: 5_000,
+      });
+
+      const consumeCallback = mockChannel.consume.mock.calls[0]?.[1] as (msg: unknown) => void;
+      consumeCallback({ content: Buffer.from('{}'), fields: {}, properties: {} });
+      await Promise.resolve();
+
+      const closing = handle.close();
+      closing.catch(() => undefined);
+      // Before the grace period elapses, the channel stays open.
+      await Promise.resolve();
+      expect(mockChannelClose).not.toHaveBeenCalled();
+      // After the grace period, close() proceeds despite the hung handler.
+      await vi.advanceTimersByTimeAsync(5_001);
+      await closing;
+      expect(mockChannelClose).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('rejects a non-integer prefetch before any I/O', async () => {
     const setupFn = await setup();
     await expect(
