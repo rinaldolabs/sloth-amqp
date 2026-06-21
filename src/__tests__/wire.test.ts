@@ -33,6 +33,16 @@ describe('makeWireEmitter', () => {
     expect(hook).toHaveBeenCalledWith(event);
   });
 
+  it('throws SlothValidationError when the hook is not a function', async () => {
+    const { SlothValidationError } = await import('../errors.js');
+    expect(() => makeWireEmitter(42 as unknown as () => void, mockLogger)).toThrow(
+      SlothValidationError,
+    );
+    expect(() => makeWireEmitter(42 as unknown as () => void, mockLogger)).toThrow(
+      'onWireMessage must be a function',
+    );
+  });
+
   it('swallows and logs a throwing hook without propagating', () => {
     vi.clearAllMocks();
     const hook = vi.fn(() => {

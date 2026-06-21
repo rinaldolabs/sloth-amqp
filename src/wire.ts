@@ -1,4 +1,4 @@
-import { errMessage } from './errors.js';
+import { errMessage, SlothValidationError } from './errors.js';
 import type { SlothLogger } from './logger.js';
 import type { OnWireMessage, SlothWireEvent } from './types.js';
 
@@ -10,13 +10,18 @@ import type { OnWireMessage, SlothWireEvent } from './types.js';
  * awaited; if it throws, the error is swallowed and logged as
  * `sloth.wire.hook_failed` via the injected logger. The library itself logs no
  * payloads — this hook is the only opt-in path message bytes leave.
+ *
+ * Throws `SlothValidationError` at construction if `onWireMessage` is provided
+ * but isn't a function (a JS-caller guard; TS already enforces the type).
  */
-export const makeWireEmitter =
-  (
-    onWireMessage: OnWireMessage | undefined,
-    logger: SlothLogger,
-  ): ((produce: () => SlothWireEvent) => void) =>
-  (produce: () => SlothWireEvent): void => {
+export const makeWireEmitter = (
+  onWireMessage: OnWireMessage | undefined,
+  logger: SlothLogger,
+): ((produce: () => SlothWireEvent) => void) => {
+  if (onWireMessage !== undefined && typeof onWireMessage !== 'function') {
+    throw new SlothValidationError('onWireMessage must be a function');
+  }
+  return (produce: () => SlothWireEvent): void => {
     if (!onWireMessage) return;
     const event = produce();
     try {
@@ -29,3 +34,4 @@ export const makeWireEmitter =
       });
     }
   };
+};

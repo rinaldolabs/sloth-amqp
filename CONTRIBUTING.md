@@ -71,6 +71,10 @@ drives the version bump:
 commitlint validates PR titles and commit messages. A guided flow is available via the
 `/commit` skill.
 
+### First-publish checklist
+
+The package publishes to npm with [Sigstore provenance](https://docs.npmjs.com/generating-provenance-statements) (`provenance: true` in `publishConfig`). On the **first** release, confirm `npm publish --provenance` actually succeeds — provenance requires `repository.url` in `package.json` to match the build's source URI, and a `git+https://…` vs HTTPS mismatch can fail the publish with a 422. After publishing, verify with `npm audit signatures`.
+
 ## Pull requests
 
 1. Branch off `main` (`<type>/<short-description>`).
