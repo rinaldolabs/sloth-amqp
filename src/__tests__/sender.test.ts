@@ -803,4 +803,46 @@ describe('createDelaySender', () => {
     ).rejects.toThrow('headers.target is reserved');
     expect(mockPublish).not.toHaveBeenCalled();
   });
+
+  it('emits an outbound wire event after the publish is confirmed', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const onWireMessage = vi.fn();
+    await createDelaySender(mockClient as never).send({
+      data: { n: 1 },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+      messageId: 'm-out',
+      correlationId: 'c-out',
+      onWireMessage,
+    });
+    expect(onWireMessage).toHaveBeenCalledTimes(1);
+    const evt = onWireMessage.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(evt['direction']).toBe('out');
+    expect(evt['exchange']).toBe('sloth.direct.exchange.request');
+    expect(evt['routingKey']).toBe('delay');
+    expect(Buffer.isBuffer(evt['content'])).toBe(true);
+    expect(evt['messageId']).toBe('m-out');
+    expect(evt['correlationId']).toBe('c-out');
+  });
+
+  it('does not let a throwing wire hook fail the send', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const onWireMessage = vi.fn(() => {
+      throw new Error('observer boom');
+    });
+    await expect(
+      createDelaySender(mockClient as never).send({
+        data: { n: 1 },
+        delayMinutes: 1,
+        logger: mockLogger,
+        config: testConfig,
+        onWireMessage,
+      }),
+    ).resolves.toBeUndefined();
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('observer boom'),
+      expect.objectContaining({ event: 'sloth.wire.hook_failed', direction: 'out' }),
+    );
+  });
 });

@@ -158,27 +158,49 @@ await send({
 
 The headers `delay-until` and `target` are reserved by the Sloth wire protocol — passing them throws before any AMQP work happens.
 
+### Wire-message tap
+
+Pass `onWireMessage` to `send` or `setupDelayedMessageListener` to observe the raw bytes crossing the wire — one call per publish (`direction: 'out'`) and per delivery (`direction: 'in'`). This lets you inspect or record payloads/routing without the library logging them itself (its structured logs never contain message bodies — the hook is the only opt-in path bytes leave):
+
+```ts
+import type { SlothWireEvent } from '@rinaldolabs/sloth-amqp';
+
+const onWireMessage = (e: SlothWireEvent) => {
+  if (e.direction === 'out') {
+    metrics.recordPublish(e.routingKey, e.content.byteLength);
+  } else {
+    metrics.recordDelivery(e.routingKey, e.redelivered);
+  }
+};
+
+await send({ data, config, logger, delaySeconds: 60, onWireMessage });
+const handle = await setupDelayedMessageListener({ amqpUrl, config, onMessage, onWireMessage });
+```
+
+The hook is synchronous and **not awaited**, so a slow observer never back-pressures the data path. If it throws, the error is caught and logged as `sloth.wire.hook_failed` and publish/consume proceeds unaffected. Treat `content` as read-only and do not retain the Buffer.
+
 ### Log events
 
 Every log call from this package emits an object-first second argument with a stable `event` name plus context fields. The names below are part of the public contract — renames are breaking changes.
 
-| Event                                     | Level | Where    | Context fields                                                         |
-| ----------------------------------------- | ----- | -------- | ---------------------------------------------------------------------- |
-| `sloth.publish.scheduling`                | debug | sender   | `serviceName`, `routingKey`, `messageId`, `correlationId`, `delayDesc` |
-| `sloth.publish.confirmed`                 | info  | sender   | + `durationMs`                                                         |
-| `sloth.publish.back_pressured`            | warn  | sender   | `serviceName`, `routingKey`, `messageId`                               |
-| `sloth.publish.failed`                    | error | sender   | + `durationMs`, `reason`                                               |
-| `sloth.publish.past_date_warning`         | warn  | sender   | `serviceName`, `routingKey`                                            |
-| `sloth.listener.setup_started`            | debug | listener | `serviceName`, `routingKey`                                            |
-| `sloth.listener.ready`                    | info  | listener | + `queueName`, `consumerTag`                                           |
-| `sloth.listener.handler_failed`           | error | listener | + `messageId`, `correlationId`, `reason`                               |
-| `sloth.listener.unexpected_message`       | error | listener | + `messageId`, `correlationId`                                         |
-| `sloth.listener.channel_error`            | error | listener | + `reason`                                                             |
-| `sloth.listener.channel_closed`           | warn  | listener | `serviceName`, `routingKey`                                            |
-| `sloth.listener.consumer_cancel_failed`   | error | listener | + `consumerTag`, `reason`                                              |
-| `sloth.listener.resources_release_failed` | error | listener | + `reason`                                                             |
-| `sloth.listener.setup_failed`             | error | listener | + `reason`                                                             |
-| `sloth.ping.failed`                       | error | ping     | `reason`                                                               |
+| Event                                     | Level | Where           | Context fields                                                         |
+| ----------------------------------------- | ----- | --------------- | ---------------------------------------------------------------------- |
+| `sloth.publish.scheduling`                | debug | sender          | `serviceName`, `routingKey`, `messageId`, `correlationId`, `delayDesc` |
+| `sloth.publish.confirmed`                 | info  | sender          | + `durationMs`                                                         |
+| `sloth.publish.back_pressured`            | warn  | sender          | `serviceName`, `routingKey`, `messageId`                               |
+| `sloth.publish.failed`                    | error | sender          | + `durationMs`, `reason`                                               |
+| `sloth.publish.past_date_warning`         | warn  | sender          | `serviceName`, `routingKey`                                            |
+| `sloth.listener.setup_started`            | debug | listener        | `serviceName`, `routingKey`                                            |
+| `sloth.listener.ready`                    | info  | listener        | + `queueName`, `consumerTag`                                           |
+| `sloth.listener.handler_failed`           | error | listener        | + `messageId`, `correlationId`, `reason`                               |
+| `sloth.listener.unexpected_message`       | error | listener        | + `messageId`, `correlationId`                                         |
+| `sloth.listener.channel_error`            | error | listener        | + `reason`                                                             |
+| `sloth.listener.channel_closed`           | warn  | listener        | `serviceName`, `routingKey`                                            |
+| `sloth.listener.consumer_cancel_failed`   | error | listener        | + `consumerTag`, `reason`                                              |
+| `sloth.listener.resources_release_failed` | error | listener        | + `reason`                                                             |
+| `sloth.listener.setup_failed`             | error | listener        | + `reason`                                                             |
+| `sloth.ping.failed`                       | error | ping            | `reason`                                                               |
+| `sloth.wire.hook_failed`                  | warn  | sender/listener | `direction`, `reason`                                                  |
 
 ### Cancellation and timeouts
 

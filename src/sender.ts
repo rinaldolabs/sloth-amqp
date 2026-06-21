@@ -4,6 +4,7 @@ import { errMessage } from './errors.js';
 import { resolveLogger } from './logger.js';
 import type { DelaySpec, SendDelayMessageParams } from './types.js';
 import { assertSafeSlothConfig, getSlothTarget, slothRequestExchangeName } from './utils.js';
+import { makeWireEmitter } from './wire.js';
 
 /** ~100 years in seconds — prevents unix timestamp overflow in the delay-until header. */
 export const MAX_DELAY_SECONDS = 100 * 365 * 24 * 3600;
@@ -198,6 +199,7 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
   const send = async <TData>(params: SendDelayMessageParams<TData>): Promise<void> => {
     const { data, logger: rawLogger, config, logLabel, logLevel } = params;
     const logger = resolveLogger(rawLogger, logLevel);
+    const emitWire = makeWireEmitter(params.onWireMessage, logger);
     assertSafeSlothConfig(config);
 
     const label = logLabel !== undefined ? sanitizeLabel(logLabel) : 'message';
@@ -263,6 +265,16 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
           });
         }
       });
+
+      emitWire(() => ({
+        direction: 'out',
+        exchange: slothRequestExchangeName,
+        routingKey: 'delay',
+        content: body,
+        headers,
+        messageId,
+        ...(params.correlationId !== undefined && { correlationId: params.correlationId }),
+      }));
 
       logger.info(`sloth: scheduled ${label}`, {
         event: 'sloth.publish.confirmed',

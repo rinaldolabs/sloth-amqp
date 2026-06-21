@@ -7,6 +7,41 @@ export type DelaySpec =
   | { delaySeconds: number; delayMinutes?: never; delayUntil?: never }
   | { delayUntil: Date; delayMinutes?: never; delaySeconds?: never };
 
+/** A message this library is about to publish. */
+export interface SlothWireOutbound {
+  readonly direction: 'out';
+  readonly exchange: string;
+  readonly routingKey: string;
+  readonly content: Buffer;
+  readonly headers?: Readonly<Record<string, unknown>>;
+  readonly messageId?: string;
+  readonly correlationId?: string;
+}
+
+/** A message this library has just received. */
+export interface SlothWireInbound {
+  readonly direction: 'in';
+  readonly queue: string;
+  readonly routingKey: string;
+  readonly content: Buffer;
+  readonly headers?: Readonly<Record<string, unknown>>;
+  readonly messageId?: string;
+  readonly correlationId?: string;
+  readonly redelivered: boolean;
+}
+
+export type SlothWireEvent = SlothWireOutbound | SlothWireInbound;
+
+/**
+ * Opt-in tap on the raw bytes crossing the wire — one call per publish
+ * (outbound) and per delivery (inbound). Lets a caller observe payloads/routing
+ * without the library logging them itself (its structured logs never include
+ * message bodies). The hook is invoked synchronously and is **not awaited**; if
+ * it throws, the error is caught and logged (`sloth.wire.hook_failed`) and
+ * publish/consume proceeds. Treat `content` as read-only and do not retain it.
+ */
+export type OnWireMessage = (event: SlothWireEvent) => void;
+
 type SendDelayMessageBase<TData = unknown> = {
   data: TData;
   logger: SlothLogger;
@@ -36,6 +71,8 @@ type SendDelayMessageBase<TData = unknown> = {
    * protocol — passing them here throws before any AMQP work happens.
    */
   headers?: Record<string, string | number | boolean>;
+  /** Opt-in tap on the outbound message bytes. See {@link OnWireMessage}. */
+  onWireMessage?: OnWireMessage;
 };
 
 export type SendDelayMessageParams<TData = unknown> = SendDelayMessageBase<TData> & DelaySpec;
@@ -66,6 +103,8 @@ export interface SlothListenerOptions {
   signal?: AbortSignal;
   /** Convenience timeout for the same setup phase. */
   timeoutMs?: number;
+  /** Opt-in tap on each inbound message's bytes. See {@link OnWireMessage}. */
+  onWireMessage?: OnWireMessage;
 }
 
 export interface SlothListenerHandle {

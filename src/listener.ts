@@ -10,6 +10,7 @@ import {
   getSlothQueueName,
   slothResponseExchangeName,
 } from './utils.js';
+import { makeWireEmitter } from './wire.js';
 
 export async function setupDelayedMessageListener({
   amqpUrl,
@@ -21,6 +22,7 @@ export async function setupDelayedMessageListener({
   logLevel,
   signal: rawSignal,
   timeoutMs,
+  onWireMessage,
 }: SlothListenerOptions): Promise<SlothListenerHandle> {
   if (!amqpUrl) {
     throw new Error('amqpUrl must not be empty');
@@ -37,6 +39,7 @@ export async function setupDelayedMessageListener({
   if (signal?.aborted) throw signal.reason as unknown;
 
   const logger = resolveLogger(rawLogger, logLevel);
+  const emitWire = makeWireEmitter(onWireMessage, logger);
   logger.debug(`sloth: setting up listener for ${config.serviceName}/${config.routingKey}`, {
     event: 'sloth.listener.setup_started',
     serviceName: config.serviceName,
@@ -145,6 +148,21 @@ export async function setupDelayedMessageListener({
             channel?.nack(message, false, false);
             return;
           }
+          emitWire(() => {
+            const headers = message.properties.headers as Record<string, unknown> | undefined;
+            const messageId = message.properties.messageId as string | undefined;
+            const correlationId = message.properties.correlationId as string | undefined;
+            return {
+              direction: 'in',
+              queue: queueName,
+              routingKey: message.fields.routingKey,
+              content: message.content,
+              redelivered: message.fields.redelivered,
+              ...(headers !== undefined && { headers }),
+              ...(messageId !== undefined && { messageId }),
+              ...(correlationId !== undefined && { correlationId }),
+            };
+          });
           onMessage(message)
             .then(() => {
               channel?.ack(message);

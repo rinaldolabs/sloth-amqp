@@ -15,10 +15,14 @@ export {
 export type { DelaySender } from './sender.js';
 export type {
   DelaySpec,
+  OnWireMessage,
   SendDelayMessageParams,
   SlothListenerHandle,
   SlothListenerOptions,
   SlothSetup,
+  SlothWireEvent,
+  SlothWireInbound,
+  SlothWireOutbound,
 } from './types.js';
 export {
   assertSafeSlothConfig,

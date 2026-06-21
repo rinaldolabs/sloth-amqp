@@ -319,6 +319,73 @@ describe('setupDelayedMessageListener', () => {
     await handle.close();
   });
 
+  it('emits an inbound wire event before handling a delivery', async () => {
+    const setupFn = await setup();
+    const onWireMessage = vi.fn();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn().mockResolvedValue(undefined),
+      logger: mockLogger,
+      onWireMessage,
+    });
+
+    const consumeCallback = mockChannel.consume.mock.calls[0]?.[1] as (msg: unknown) => void;
+    const msg = {
+      content: Buffer.from('{"n":1}'),
+      fields: { routingKey: 'test.key', redelivered: true },
+      properties: {
+        headers: { service: 'test-service' },
+        messageId: 'm-in',
+        correlationId: 'c-in',
+      },
+    };
+    consumeCallback(msg);
+    await new Promise((r) => setImmediate(r));
+
+    expect(onWireMessage).toHaveBeenCalledTimes(1);
+    const evt = onWireMessage.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(evt['direction']).toBe('in');
+    expect(evt['queue']).toBe('sloth.headers.exchange.response.queue.test-service');
+    expect(evt['routingKey']).toBe('test.key');
+    expect(evt['redelivered']).toBe(true);
+    expect(evt['messageId']).toBe('m-in');
+    expect(evt['correlationId']).toBe('c-in');
+    await handle.close();
+  });
+
+  it('does not let a throwing inbound wire hook break delivery', async () => {
+    const setupFn = await setup();
+    const onMessage = vi.fn().mockResolvedValue(undefined);
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage,
+      logger: mockLogger,
+      onWireMessage: () => {
+        throw new Error('observer boom');
+      },
+    });
+
+    const consumeCallback = mockChannel.consume.mock.calls[0]?.[1] as (msg: unknown) => void;
+    const msg = {
+      content: Buffer.from('{}'),
+      fields: { routingKey: 'test.key', redelivered: false },
+      properties: { headers: {} },
+    };
+    consumeCallback(msg);
+    await new Promise((r) => setImmediate(r));
+
+    // Delivery still handled and acked despite the hook throwing.
+    expect(onMessage).toHaveBeenCalledWith(msg);
+    expect(mockChannelAck).toHaveBeenCalledWith(msg);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('observer boom'),
+      expect.objectContaining({ event: 'sloth.wire.hook_failed', direction: 'in' }),
+    );
+    await handle.close();
+  });
+
   it('logs channel errors via error event', async () => {
     const setupFn = await setup();
     const handle = await setupFn({

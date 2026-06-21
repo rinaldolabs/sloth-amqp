@@ -42,8 +42,9 @@ This package implements a single messaging pattern: **delayed-message request/re
 - **`listener.ts`** — `setupDelayedMessageListener(opts)` declares the response queue, binds it to `sloth.headers.exchange.response` with the headers binding `service: <serviceName>`, registers the consumer. Returns a `SlothListenerHandle { consumerTag, close() }`. `noAck: false`; handler success → `ack`, handler failure → `nack(requeue=false)` so the broker DLX takes over. Accepts optional `signal` / `timeoutMs` to bound the setup phase.
 - **`logger.ts`** — `SlothLogger` interface (`info/warn/error/debug` required, `child` optional). `NoOpLogger` is the default; `consoleLogger` is a `console`-backed shim for scripts/demos. `withLogLevel(logger, level)` filters by minimum level and only exposes `child` when the wrapped logger has it.
 - **`errors.ts`** — `errMessage(unknown)` extracts a safe string from any caught value. Used everywhere to avoid leaking stack traces.
-- **`types.ts`** — public param shapes (`SendDelayMessageParams<TData>`, `SlothListenerOptions`, `SlothListenerHandle`, `SlothSetup`).
-- **`utils.ts`** — protocol constants (exchange names, routing keys, default queue TTL), `SlothConfig`, and `assertSafeSlothConfig` which validates `serviceName`/`routingKey` against `[A-Za-z0-9._-]+` before they flow into AMQP routing strings.
+- **`types.ts`** — public param shapes (`SendDelayMessageParams<TData>`, `SlothListenerOptions`, `SlothListenerHandle`, `SlothSetup`, `SlothWireEvent`/`SlothWireOutbound`/`SlothWireInbound`, `OnWireMessage`).
+- **`wire.ts`** — `makeWireEmitter(onWireMessage, logger)` returns a non-throwing emitter for the opt-in wire tap; it skips building the event when no hook is set and routes a throwing hook to the logger (`sloth.wire.hook_failed`) instead of breaking publish/consume.
+- **`utils.ts`** — protocol constants (exchange names, routing keys, default queue TTL, default prefetch), `SlothConfig`, `assertSafeSlothConfig` which validates `serviceName`/`routingKey` against `[A-Za-z0-9._-]+`, and `slothClientProperties` for broker-visible `connection_name`.
 - **`index.ts`** — public-API barrel; excluded from coverage.
 - **`__tests__/`** — co-located vitest specs (one per module).
 
@@ -110,11 +111,11 @@ Anything exported from `src/index.ts` is part of the published API. Treat change
 - `NoOpLogger`, `consoleLogger`, `withLogLevel`
 - `SlothConfig`, `assertSafeSlothConfig`, `getSlothQueueName`, `getSlothTarget`, `slothClientProperties`
 - `slothRequestExchangeName`, `slothResponseExchangeName`, `defaultListenerQueueExpiresMs`, `defaultListenerPrefetch`
-- Types: `SlothLogger`, `SlothLogLevel`, `DelaySpec`, `SendDelayMessageParams<TData>`, `SlothListenerOptions`, `SlothListenerHandle`, `SlothSetup`, `SlothConnectOptions`, `PingOptions`
+- Types: `SlothLogger`, `SlothLogLevel`, `DelaySpec`, `SendDelayMessageParams<TData>`, `SlothListenerOptions`, `SlothListenerHandle`, `SlothSetup`, `SlothConnectOptions`, `PingOptions`, `OnWireMessage`, `SlothWireEvent`, `SlothWireInbound`, `SlothWireOutbound`
 
 ### Stable log event names
 
-Logger calls emit an object-first second arg with a stable `event` string. The catalogue lives in README under "Log events" and is part of the public contract — renames are breaking changes. Sender events are prefixed `sloth.publish.*`, listener events `sloth.listener.*`, ping events `sloth.ping.*`.
+Logger calls emit an object-first second arg with a stable `event` string. The catalogue lives in README under "Log events" and is part of the public contract — renames are breaking changes. Sender events are prefixed `sloth.publish.*`, listener events `sloth.listener.*`, ping events `sloth.ping.*`, wire-tap failures `sloth.wire.*`.
 
 ## Resource hygiene
 
