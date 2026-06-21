@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import type { ChannelModel, ConfirmChannel } from 'amqplib';
-import { errMessage, SlothPublishError, SlothValidationError } from './errors.js';
+import { combineAbort, raceWithAbort } from './abort.js';
+import {
+  errMessage,
+  SlothPublishError,
+  SlothTimeoutError,
+  SlothValidationError,
+} from './errors.js';
 import { resolveLogger } from './logger.js';
 import type { DelaySpec, SendDelayMessageParams } from './types.js';
 import { assertSafeSlothConfig, getSlothTarget, slothRequestExchangeName } from './utils.js';
@@ -237,13 +243,24 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
       delayDesc,
     });
 
+    // Bounds the confirm wait. amqplib has no per-publish timeout; without this
+    // a black-hole partition (socket alive, no confirm) hangs send() until
+    // heartbeats trip the channel — and indefinitely if the connection set
+    // heartbeat:0 (which genuinely disables heartbeats on amqplib v2).
+    const signal = combineAbort(params.signal, params.timeoutMs);
+    if (signal?.aborted) throw signal.reason as unknown;
+
     const startTime = Date.now();
     try {
       const chan = await acquire();
       // ConfirmChannel.publish takes a callback that fires on broker ack/nack.
       // Wrapping it in a Promise turns the callback into the resolution signal:
       // resolve = broker accepted, reject = broker nacked or channel error.
-      await new Promise<void>((resolve, reject) => {
+      // If a timeout wins the race below, the underlying publish can't be
+      // cancelled — but a late ack/nack then calls resolve/reject on an
+      // already-settled promise, which is a harmless no-op (no extra guard
+      // needed).
+      const confirm = new Promise<void>((resolve, reject) => {
         const ok = chan.publish(
           slothRequestExchangeName,
           'delay',
@@ -267,6 +284,22 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
           });
         }
       });
+      // Race the confirm against the signal. Don't close the channel on a
+      // timeout — the message may still confirm and the channel is still
+      // healthy for the next send. A TimeoutError from our own timeoutMs is
+      // normalised to SlothTimeoutError; a caller abort() reason propagates
+      // verbatim.
+      try {
+        await raceWithAbort(confirm, signal);
+      } catch (raceErr) {
+        if (raceErr instanceof DOMException && raceErr.name === 'TimeoutError') {
+          throw new SlothTimeoutError(
+            `publish confirm timed out after ${String(params.timeoutMs)}ms`,
+            { cause: raceErr },
+          );
+        }
+        throw raceErr;
+      }
 
       emitWire(() => ({
         direction: 'out',

@@ -74,12 +74,16 @@ await send({ data, config, logger, delayUntil: new Date('2030-01-01T00:00:00Z') 
 
 Optional fields on every variant:
 
-| Field      | Type            | Notes                                                                                                             |
-| ---------- | --------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `logLabel` | `string`        | Human-readable identifier used in log lines. Sanitized (control chars stripped, capped at 200 grapheme clusters). |
-| `logLevel` | `SlothLogLevel` | Minimum level for **this library's** log calls. The caller's logger is otherwise unchanged.                       |
+| Field       | Type            | Notes                                                                                                                      |
+| ----------- | --------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `logLabel`  | `string`        | Human-readable identifier used in log lines. Sanitized (control chars stripped, capped at 200 grapheme clusters).          |
+| `logLevel`  | `SlothLogLevel` | Minimum level for **this library's** log calls. The caller's logger is otherwise unchanged.                                |
+| `timeoutMs` | `number`        | Bounds the wait for the broker's publish confirm; on expiry `send` rejects with `SlothTimeoutError`. See the caveat below. |
+| `signal`    | `AbortSignal`   | Caller signal bounding the confirm wait (same semantics as `timeoutMs`).                                                   |
 
 All variants are validated before any AMQP work happens: positive and finite numbers, valid `Date`, capped at ~100 years (`MAX_DELAY_SECONDS`). A `delayUntil` in the past is logged at `warn` and still published — Sloth will deliver immediately, matching the upstream Go client's behavior. If you set `logLevel: 'error'` (or wrap with `withLogLevel(..., 'error')`), this warning is suppressed; use `'warn'` or lower if you want to see past-date schedules.
+
+> **Publish timeout & at-least-once.** Without `timeoutMs`/`signal`, `send` resolves only when the broker confirms (or the channel closes). On a black-hole partition (socket alive but no confirm) it can hang until heartbeats trip the channel — and **indefinitely** if the connection was opened with `heartbeat: 0`, which genuinely disables heartbeats on amqplib v2. Set `timeoutMs` to bound this. **A timed-out publish may still have reached the broker** — delivery is at-least-once, so make consumers idempotent. A timeout does not recreate the cached channel (the message may yet confirm); only a broker error/close does.
 
 ### Listening for delivered messages
 

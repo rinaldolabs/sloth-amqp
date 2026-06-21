@@ -73,6 +73,20 @@ type SendDelayMessageBase<TData = unknown> = {
   headers?: Record<string, string | number | boolean>;
   /** Opt-in tap on the outbound message bytes. See {@link OnWireMessage}. */
   onWireMessage?: OnWireMessage;
+  /**
+   * Bounds the wait for the broker's publish confirm. On expiry `send` rejects
+   * with a `SlothTimeoutError`. **At-least-once caveat:** a timed-out publish
+   * may still have reached the broker — design consumers to be idempotent. The
+   * cached channel is kept (the message may yet confirm); only a broker
+   * error/close recreates it.
+   */
+  timeoutMs?: number;
+  /**
+   * Caller `AbortSignal` bounding the confirm wait — same semantics as
+   * `timeoutMs`; whichever fires first wins. A caller-`abort()` rejects with
+   * the signal's reason verbatim (not a `SlothTimeoutError`).
+   */
+  signal?: AbortSignal;
 };
 
 export type SendDelayMessageParams<TData = unknown> = SendDelayMessageBase<TData> & DelaySpec;

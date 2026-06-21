@@ -502,6 +502,89 @@ describe('createDelaySender', () => {
     );
   });
 
+  it('rejects with SlothTimeoutError when the confirm does not arrive in time', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const { SlothTimeoutError } = await import('../errors.js');
+    // publish never invokes the confirm callback → confirm hangs.
+    mockPublish.mockImplementationOnce(() => true);
+    const { send } = createDelaySender(mockClient as never);
+    const promise = send({
+      data: { n: 1 },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+      timeoutMs: 50,
+    });
+    promise.catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(51);
+    await expect(promise).rejects.toBeInstanceOf(SlothTimeoutError);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('failed to schedule'),
+      expect.objectContaining({ event: 'sloth.publish.failed' }),
+    );
+  });
+
+  it('keeps the cached channel after a publish timeout (does not recreate)', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const { send } = createDelaySender(mockClient as never);
+    // First send times out (no confirm callback)...
+    mockPublish.mockImplementationOnce(() => true);
+    const p1 = send({
+      data: { n: 1 },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+      timeoutMs: 50,
+    });
+    p1.catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(51);
+    await expect(p1).rejects.toThrow();
+    // ...the next send reuses the same channel (default publish impl confirms).
+    await send({ data: { n: 2 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    expect(mockCreateConfirmChannel).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a late confirm callback that fires after the timeout (no throw)', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    let lateCb: PublishCallback | undefined;
+    mockPublish.mockImplementationOnce(
+      (_ex: string, _rk: string, _body: Buffer, _opts: unknown, cb: PublishCallback): boolean => {
+        lateCb = cb;
+        return true;
+      },
+    );
+    const { send } = createDelaySender(mockClient as never);
+    const promise = send({
+      data: { n: 1 },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+      timeoutMs: 50,
+    });
+    promise.catch(() => undefined);
+    await vi.advanceTimersByTimeAsync(51);
+    await expect(promise).rejects.toThrow();
+    // The broker confirm arrives late — the settled guard must make it a no-op.
+    expect(() => {
+      lateCb?.(null);
+    }).not.toThrow();
+  });
+
+  it('throws immediately when the caller signal is already aborted', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const ac = new AbortController();
+    ac.abort(new Error('pre-aborted'));
+    await expect(
+      createDelaySender(mockClient as never).send({
+        data: { n: 1 },
+        delayMinutes: 1,
+        logger: mockLogger,
+        config: testConfig,
+        signal: ac.signal,
+      }),
+    ).rejects.toThrow('pre-aborted');
+  });
+
   it('suppresses debug and info logs when logLevel is error', async () => {
     const { createDelaySender } = await import('../sender.js');
     await createDelaySender(mockClient as never).send({
