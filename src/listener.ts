@@ -260,27 +260,30 @@ export async function setupDelayedMessageListener({
       consumerTag,
     });
 
+    const close = async (): Promise<void> => {
+      try {
+        if (channel) {
+          // cancel() guarantees no further deliveries once it resolves, so
+          // after this only already-started handlers remain to drain.
+          await channel.cancel(consumerTag);
+        }
+      } catch (error) {
+        logger.error(`sloth: failed to cancel consumer: ${errMessage(error)}`, {
+          event: 'sloth.listener.consumer_cancel_failed',
+          serviceName: config.serviceName,
+          routingKey: config.routingKey,
+          consumerTag,
+          reason: errMessage(error),
+        });
+      }
+      await drain(graceTimeoutMs);
+      await closeResources();
+    };
+
     return {
       consumerTag,
-      close: async (): Promise<void> => {
-        try {
-          if (channel) {
-            // cancel() guarantees no further deliveries once it resolves, so
-            // after this only already-started handlers remain to drain.
-            await channel.cancel(consumerTag);
-          }
-        } catch (error) {
-          logger.error(`sloth: failed to cancel consumer: ${errMessage(error)}`, {
-            event: 'sloth.listener.consumer_cancel_failed',
-            serviceName: config.serviceName,
-            routingKey: config.routingKey,
-            consumerTag,
-            reason: errMessage(error),
-          });
-        }
-        await drain(graceTimeoutMs);
-        await closeResources();
-      },
+      close,
+      [Symbol.asyncDispose]: close,
     };
   } catch (error) {
     logger.error(`sloth: listener setup failed: ${errMessage(error)}`, {

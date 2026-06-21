@@ -131,9 +131,11 @@ export interface SlothListenerOptions {
   graceTimeoutMs?: number;
 }
 
-export interface SlothListenerHandle {
+export interface SlothListenerHandle extends AsyncDisposable {
   readonly consumerTag: string;
   close(): Promise<void>;
+  /** Alias for {@link close}, enabling `await using handle = …`. */
+  [Symbol.asyncDispose](): Promise<void>;
 }
 
 export type SlothSetup = (client: ChannelModel) => Promise<void>;

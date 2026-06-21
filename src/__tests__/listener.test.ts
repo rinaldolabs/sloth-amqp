@@ -731,6 +731,23 @@ describe('SlothListenerHandle.close', () => {
     expect(mockConnectionClose).toHaveBeenCalled();
   });
 
+  it('disposes via Symbol.asyncDispose (await using)', async () => {
+    const setupFn = await setup();
+    {
+      await using handle = await setupFn({
+        amqpUrl: 'amqp://localhost',
+        config: testConfig,
+        onMessage: vi.fn(),
+        logger: mockLogger,
+      });
+      expect(handle.consumerTag).toBe('tag-1');
+    }
+    // Scope exit ran [Symbol.asyncDispose] → close().
+    expect(mockChannelCancel).toHaveBeenCalledWith('tag-1');
+    expect(mockChannelClose).toHaveBeenCalled();
+    expect(mockConnectionClose).toHaveBeenCalled();
+  });
+
   it('is safe to call multiple times', async () => {
     const setupFn = await setup();
     const handle = await setupFn({

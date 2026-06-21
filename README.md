@@ -107,6 +107,13 @@ process.on('SIGTERM', () => void handle.close());
 process.on('SIGINT', () => void handle.close());
 ```
 
+The handle is an `AsyncDisposable`, so you can also scope it with `await using` (TS 5.2+, Node 24) — `close()` runs automatically on scope exit:
+
+```ts
+await using handle = await setupDelayedMessageListener({ amqpUrl, config, onMessage });
+// handle.close() is called when this scope exits (including on throw).
+```
+
 Optional fields on `setupDelayedMessageListener`:
 
 | Field            | Type     | Default | Notes                                                                                                                                                                                        |
