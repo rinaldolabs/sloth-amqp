@@ -5,6 +5,7 @@ import { NoOpLogger, resolveLogger } from './logger.js';
 import type { SlothListenerHandle, SlothListenerOptions } from './types.js';
 import {
   assertSafeSlothConfig,
+  defaultListenerPrefetch,
   defaultListenerQueueExpiresMs,
   getSlothQueueName,
   slothResponseExchangeName,
@@ -16,6 +17,7 @@ export async function setupDelayedMessageListener({
   logger: rawLogger = new NoOpLogger(),
   onMessage,
   queueExpiresMs = defaultListenerQueueExpiresMs,
+  prefetch = defaultListenerPrefetch,
   logLevel,
   signal: rawSignal,
   timeoutMs,
@@ -26,6 +28,9 @@ export async function setupDelayedMessageListener({
   assertSafeSlothConfig(config);
   if (!Number.isFinite(queueExpiresMs) || queueExpiresMs <= 0) {
     throw new Error('queueExpiresMs must be a positive finite number');
+  }
+  if (!Number.isInteger(prefetch) || prefetch < 0) {
+    throw new Error('prefetch must be a non-negative integer');
   }
 
   const signal = combineAbort(rawSignal, timeoutMs);
@@ -92,6 +97,11 @@ export async function setupDelayedMessageListener({
         routingKey: config.routingKey,
       });
     });
+
+    // Bound the unacked-message window before declaring anything, so a burst of
+    // due-now redeliveries can't flood this consumer's memory. prefetch=0 means
+    // unlimited (caller opt-in). Per-consumer, not global.
+    await raceWithAbort(channel.prefetch(prefetch), signal);
 
     // Sloth re-delivers via sloth.headers.exchange.response (headers exchange) —
     // matches goamqp ServiceResponseConsumer in amqp.go

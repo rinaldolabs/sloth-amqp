@@ -6,6 +6,7 @@ const testConfig: SlothConfig = { serviceName: 'test-service', routingKey: 'test
 
 const mockChannelClose = vi.fn().mockResolvedValue(undefined);
 const mockChannelCancel = vi.fn().mockResolvedValue(undefined);
+const mockChannelPrefetch = vi.fn().mockResolvedValue(undefined);
 const mockChannelAck = vi.fn();
 const mockChannelNack = vi.fn();
 const mockConnectionClose = vi.fn().mockResolvedValue(undefined);
@@ -21,6 +22,7 @@ const mockChannel = {
   assertQueue: vi.fn().mockResolvedValue(undefined),
   bindQueue: vi.fn().mockResolvedValue(undefined),
   consume: vi.fn().mockResolvedValue({ consumerTag: 'tag-1' }),
+  prefetch: mockChannelPrefetch,
   cancel: mockChannelCancel,
   ack: mockChannelAck,
   nack: mockChannelNack,
@@ -54,6 +56,7 @@ describe('setupDelayedMessageListener', () => {
     mockCreateChannel.mockResolvedValue(mockChannel);
     mockChannelClose.mockResolvedValue(undefined);
     mockChannelCancel.mockResolvedValue(undefined);
+    mockChannelPrefetch.mockResolvedValue(undefined);
     mockConnectionClose.mockResolvedValue(undefined);
     mockChannel.consume.mockResolvedValue({ consumerTag: 'tag-1' });
   });
@@ -108,6 +111,72 @@ describe('setupDelayedMessageListener', () => {
       expect.objectContaining({ expires: 60000 }),
     );
     await handle.close();
+  });
+
+  it('applies the default prefetch (20) when none is provided', async () => {
+    const setupFn = await setup();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+    });
+    expect(mockChannelPrefetch).toHaveBeenCalledWith(20);
+    await handle.close();
+  });
+
+  it('forwards a custom prefetch value', async () => {
+    const setupFn = await setup();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+      prefetch: 100,
+    });
+    expect(mockChannelPrefetch).toHaveBeenCalledWith(100);
+    await handle.close();
+  });
+
+  it('allows prefetch 0 (unlimited)', async () => {
+    const setupFn = await setup();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+      prefetch: 0,
+    });
+    expect(mockChannelPrefetch).toHaveBeenCalledWith(0);
+    await handle.close();
+  });
+
+  it('rejects a negative prefetch before any I/O', async () => {
+    const setupFn = await setup();
+    await expect(
+      setupFn({
+        amqpUrl: 'amqp://localhost',
+        config: testConfig,
+        onMessage: vi.fn(),
+        logger: mockLogger,
+        prefetch: -1,
+      }),
+    ).rejects.toThrow('prefetch must be a non-negative integer');
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-integer prefetch before any I/O', async () => {
+    const setupFn = await setup();
+    await expect(
+      setupFn({
+        amqpUrl: 'amqp://localhost',
+        config: testConfig,
+        onMessage: vi.fn(),
+        logger: mockLogger,
+        prefetch: 2.5,
+      }),
+    ).rejects.toThrow('prefetch must be a non-negative integer');
+    expect(mockConnect).not.toHaveBeenCalled();
   });
 
   it('rejects empty amqpUrl', async () => {

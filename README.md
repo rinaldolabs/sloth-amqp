@@ -103,6 +103,13 @@ process.on('SIGTERM', () => void handle.close());
 process.on('SIGINT', () => void handle.close());
 ```
 
+Optional fields on `setupDelayedMessageListener`:
+
+| Field            | Type     | Default  | Notes                                                                                                                                                       |
+| ---------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queueExpiresMs` | `number` | 5 days   | Auto-expiry for the response queue when no consumer is connected (`x-expires`). Must be positive and finite.                                                |
+| `prefetch`       | `number` | `20`     | Consumer prefetch (QoS) — max unacknowledged messages delivered at once. Sloth re-delivers in bursts, so a bounded window caps memory. `0` = unlimited. Must be a non-negative integer. |
+
 ### Health checks
 
 `ping(client, opts?)` is a cheap liveness probe — it opens a temporary channel, asserts that the Sloth request exchange is reachable, and closes the channel. Suitable for Kubernetes readiness/liveness endpoints and graceful-startup gates.

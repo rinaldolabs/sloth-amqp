@@ -46,6 +46,15 @@ export interface SlothListenerOptions {
   logger?: SlothLogger;
   onMessage: (message: ConsumeMessage) => Promise<void>;
   queueExpiresMs?: number;
+  /**
+   * Consumer prefetch (QoS) — the maximum number of unacknowledged messages
+   * the broker will deliver to this consumer at once. Defaults to `20`.
+   * Sloth re-delivers in bursts when many delayed messages come due together,
+   * so an unbounded prefetch (`0`) risks holding the whole burst in memory;
+   * keep a bounded window unless you have a specific reason. Set `0` for
+   * unlimited. Must be a non-negative integer.
+   */
+  prefetch?: number;
   // Optional minimum level for this library's log calls. Caller's logger is otherwise untouched.
   logLevel?: SlothLogLevel;
   /**

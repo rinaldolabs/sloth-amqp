@@ -6,6 +6,11 @@ export const slothResponseExchangeName = 'sloth.headers.exchange.response';
 
 export const defaultListenerQueueExpiresMs = 5 * 24 * 60 * 60 * 1000;
 
+// Default consumer prefetch (QoS). A bounded window protects against holding a
+// full burst of due-now redeliveries in memory; 20 is the common balance
+// between pipelining and bounded unacked messages. Override per-listener.
+export const defaultListenerPrefetch = 20;
+
 // SlothConfig mirrors the Go client's New(serviceName, amqpURL, ...mappings) signature:
 // serviceName and routingKey are mandatory — the Sloth server uses them to route the response
 // back to the correct queue. gitlab.com/unboundsoftware/sloth/client-amqp/client.go
