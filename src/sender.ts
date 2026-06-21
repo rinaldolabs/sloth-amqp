@@ -56,6 +56,12 @@ export const sanitizeLabel = (raw: string): string =>
  * (seconds since epoch) and a human-readable description for log lines.
  * Throws on invalid input or out-of-range values. Past delayUntil dates
  * return a pastDateWarning instead of throwing.
+ *
+ * Rounding contract: `delayUntil` rounds **up** (`Math.ceil`) so an absolute
+ * deadline is never delivered in the second before it; the relative variants
+ * (`delaySeconds`/`delayMinutes`) round **down** (`Math.floor`), so the effect
+ * is at most one second short of the requested offset. Both are sub-second
+ * effects on a service whose granularity is whole seconds.
  */
 export const resolveDelaySeconds = (
   params: DelaySpec,
