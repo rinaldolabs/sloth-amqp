@@ -12,10 +12,7 @@ export const errMessage = (e: unknown): string => (e instanceof Error ? e.messag
  * ```
  */
 export type SlothErrorCode =
-  | 'SLOTH_VALIDATION'
-  | 'SLOTH_PUBLISH'
-  | 'SLOTH_TIMEOUT'
-  | 'SLOTH_CONNECT';
+  'SLOTH_VALIDATION' | 'SLOTH_PUBLISH' | 'SLOTH_TIMEOUT' | 'SLOTH_CONNECT';
 
 /**
  * Base class for every error this library throws. Carries a readonly {@link code}
