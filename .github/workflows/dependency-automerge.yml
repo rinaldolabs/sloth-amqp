@@ -1,10 +1,12 @@
 name: Auto-merge dependency PRs
 
-# Auto-approve and auto-merge Renovate PRs. Renovate's `platformAutomerge: true`
-# alone is unreliable in repos with branch rulesets — this workflow provides the
-# explicit review + auto-merge clicks. The PR author (renovate[bot]) is a different
-# actor from the workflow runner (github-actions[bot]), so GitHub's "no self-approval"
-# rule is satisfied.
+# Approve and merge Renovate PRs — but only after CI is green. This repo has no
+# branch rulesets (free private plan), so `gh pr merge --auto` would merge
+# IMMEDIATELY with zero CI; instead this job watches the PR's checks and only
+# merges once they all pass. When rulesets exist later, the direct merge still
+# respects required checks. The PR author (renovate[bot]) is a different actor
+# from the reviewer (github-actions[bot]), so GitHub's "no self-approval" rule
+# is satisfied.
 
 on:
   pull_request:
@@ -20,23 +22,80 @@ concurrency:
 
 jobs:
   renovate-automerge:
+    # Gate on the PR author's immutable user id (29139614 = renovate[bot]) —
+    # github.actor names whoever caused the latest event and is spoofable.
     if: >
-      github.actor == 'renovate[bot]' &&
-      github.event.pull_request.user.login == 'renovate[bot]'
+      github.event.pull_request.user.login == 'renovate[bot]' &&
+      github.event.pull_request.user.id == 29139614
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 30
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       PR_URL: ${{ github.event.pull_request.html_url }}
     steps:
+      # Merges made with GITHUB_TOKEN don't trigger the release-please push
+      # workflow, so merged dep PRs would never surface in a release PR. Wiring
+      # the same GitHub App as release.yml (vars.RELEASE_APP_ID +
+      # secrets.RELEASE_APP_PRIVATE_KEY) fixes the cascade — until then, the
+      # merge step falls back to github.token.
+      - uses: actions/create-github-app-token@v2
+        if: vars.RELEASE_APP_ID != ''
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          # Scope the token to what the merge needs, not the App's full grant.
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Approve non-major updates
         if: "!contains(github.event.pull_request.labels.*.name, 'major')"
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: gh pr review --approve "$PR_URL"
 
-      - name: Enable auto-merge (squash) for non-major updates
+      - name: Wait for CI
         if: "!contains(github.event.pull_request.labels.*.name, 'major')"
-        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Give the PR's check runs time to register before watching.
+          sleep 60
+          # `gh pr checks --watch` would wait on this job's own check run and
+          # deadlock until the job timeout, so poll every OTHER check instead:
+          # fail the job as soon as any check fails (the merge step below never
+          # runs), succeed once everything else has passed. The job-level
+          # timeout-minutes is the backstop.
+          while true; do
+            counts="$(gh pr checks "$PR_URL" --json bucket,workflow \
+              --jq '[.[] | select(.workflow != "Auto-merge dependency PRs")]
+                | "\([.[] | select(.bucket == "fail" or .bucket == "cancel")] | length) \([.[] | select(.bucket == "pending")] | length) \(length)"' \
+              || true)"
+            read -r failed pending total <<< "$counts"
+            if [[ -z "$total" || "$total" == "0" ]]; then
+              echo "No checks reported yet; waiting..."
+              sleep 15
+              continue
+            fi
+            if [[ "$failed" != "0" ]]; then
+              echo "$failed of $total checks failed — not merging"
+              exit 1
+            fi
+            if [[ "$pending" == "0" ]]; then
+              echo "All $total checks passed"
+              break
+            fi
+            echo "$pending of $total checks still pending..."
+            sleep 15
+          done
+
+      - name: Merge non-major updates (squash)
+        if: "!contains(github.event.pull_request.labels.*.name, 'major')"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+        run: gh pr merge --squash "$PR_URL"
 
       - name: Disable auto-merge for major updates (safety net)
         if: "contains(github.event.pull_request.labels.*.name, 'major')"
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: gh pr merge --disable-auto "$PR_URL"

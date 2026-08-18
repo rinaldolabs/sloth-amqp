@@ -5,8 +5,11 @@ name: PR title
 # happy and the changelog clean. Complements wagoid/commitlint-github-action which
 # validates every commit on the branch.
 
+# Plain pull_request is deliberate (not pull_request_target): the job never
+# checks out PR code and only reads PR metadata, which fork PRs' read-only
+# token can do too.
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, edited, synchronize, reopened]
 
 permissions:

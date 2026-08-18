@@ -1,3 +1,5 @@
+import { SlothValidationError } from './errors.js';
+
 export interface SlothLogger {
   info(msg: string, ...meta: unknown[]): void;
   warn(msg: string, ...meta: unknown[]): void;
@@ -13,6 +15,10 @@ export interface SlothLogger {
 }
 
 export type SlothLogLevel = 'debug' | 'info' | 'warn' | 'error' | 'silent';
+
+// Runtime guard for JS callers: an invalid level string would otherwise make
+// every rank comparison false and silently drop ALL log output.
+const validLevels: ReadonlySet<string> = new Set(['debug', 'info', 'warn', 'error', 'silent']);
 
 const rankFor = (level: SlothLogLevel): number => {
   switch (level) {
@@ -47,6 +53,9 @@ export const resolveLogger = (inner: SlothLogger, minLevel?: SlothLogLevel): Slo
 // Wraps an existing SlothLogger and drops calls below `minLevel`. Use to suppress
 // noisy `debug`/`info` from this library while keeping the consumer's logger intact.
 export const withLogLevel = (inner: SlothLogger, minLevel: SlothLogLevel): SlothLogger => {
+  if (!validLevels.has(minLevel)) {
+    throw new SlothValidationError('logLevel must be one of debug|info|warn|error|silent');
+  }
   const min = rankFor(minLevel);
   const allow = (level: Exclude<SlothLogLevel, 'silent'>): boolean => rankFor(level) >= min;
   const base: SlothLogger = {

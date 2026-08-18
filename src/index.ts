@@ -25,6 +25,7 @@ export type {
   DelaySpec,
   OnWireMessage,
   SendDelayMessageParams,
+  SlothListenerClosedReason,
   SlothListenerHandle,
   SlothListenerOptions,
   SlothSetup,
@@ -40,6 +41,7 @@ export {
   getSlothQueueName,
   getSlothTarget,
   slothClientProperties,
+  slothDelayRoutingKey,
   slothRequestExchangeName,
   slothResponseExchangeName,
 } from './utils.js';

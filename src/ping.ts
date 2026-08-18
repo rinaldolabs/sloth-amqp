@@ -1,6 +1,6 @@
 import type { ChannelModel } from 'amqplib';
 import { combineAbort, raceWithAbort, safeClose } from './abort.js';
-import { errMessage } from './errors.js';
+import { errMessage, SlothConnectError, toSlothError } from './errors.js';
 import { NoOpLogger, resolveLogger, type SlothLogger, type SlothLogLevel } from './logger.js';
 import { slothRequestExchangeName } from './utils.js';
 
@@ -41,16 +41,31 @@ export const ping = async (client: ChannelModel, opts: PingOptions = {}): Promis
   if (signal?.aborted) throw signal.reason as unknown;
   const logger = resolveLogger(opts.logger ?? new NoOpLogger(), opts.logLevel);
 
-  const channel = await raceWithAbort(client.createChannel(), signal, safeClose);
   try {
-    await raceWithAbort(channel.checkExchange(slothRequestExchangeName), signal);
+    const channel = await raceWithAbort(client.createChannel(), signal, safeClose);
+    // A failed checkExchange (exchange missing — the documented probe-failure
+    // case) makes the broker close the channel, and amqplib emits 'error' on
+    // it. Without a listener that emit would escape as an uncaught exception
+    // and can tear down the whole shared connection. The rejection below is
+    // the real failure signal; the event is just noise to absorb.
+    channel.on('error', (err: unknown) => {
+      logger.debug('sloth: ping channel error', {
+        event: 'sloth.ping.channel_error',
+        reason: errMessage(err),
+      });
+    });
+    try {
+      await raceWithAbort(channel.checkExchange(slothRequestExchangeName), signal);
+    } finally {
+      await safeClose(channel);
+    }
   } catch (error) {
     logger.error('sloth: ping failed', {
       event: 'sloth.ping.failed',
       reason: errMessage(error),
     });
-    throw error;
-  } finally {
-    await safeClose(channel);
+    // Typed-error contract: foreign (amqplib/broker) failures surface as
+    // SlothConnectError with the cause chained; abort reasons pass verbatim.
+    throw toSlothError(error, signal, SlothConnectError);
   }
 };

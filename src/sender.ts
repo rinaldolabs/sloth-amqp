@@ -6,10 +6,16 @@ import {
   SlothPublishError,
   SlothTimeoutError,
   SlothValidationError,
+  toSlothError,
 } from './errors.js';
 import { resolveLogger } from './logger.js';
 import type { DelaySpec, SendDelayMessageParams } from './types.js';
-import { assertSafeSlothConfig, getSlothTarget, slothRequestExchangeName } from './utils.js';
+import {
+  assertSafeSlothConfig,
+  getSlothTarget,
+  slothDelayRoutingKey,
+  slothRequestExchangeName,
+} from './utils.js';
 import { makeWireEmitter } from './wire.js';
 
 /** ~100 years in seconds — prevents unix timestamp overflow in the delay-until header. */
@@ -42,21 +48,38 @@ const assertNoReservedHeaders = (
 };
 
 /**
- * Strips control and newline-like characters and truncates to 200 grapheme clusters
- * so caller-supplied labels cannot inject line breaks or escape sequences into log output.
- * Removed: ASCII controls (U+0000–U+001F), DEL (U+007F), NEL (U+0085),
- *           Unicode line separator (U+2028), paragraph separator (U+2029).
+ * Strips control and direction-manipulating characters and truncates to 200
+ * grapheme clusters so caller-supplied labels cannot inject line breaks, escape
+ * sequences, or bidi-reordering tricks into log output.
+ * Removed: ASCII controls (U+0000–U+001F), DEL + C1 controls (U+007F–U+009F,
+ * which covers NEL U+0085 and CSI U+009B), Unicode line/paragraph separators
+ * (U+2028/U+2029), bidi embeddings/overrides (U+202A–U+202E), and bidi
+ * isolates (U+2066–U+2069).
  */
 const segmenter = new Intl.Segmenter();
 const isUnsafeChar = (c: string): boolean => {
   const n = c.codePointAt(0);
-  return n !== undefined && (n <= 0x1f || n === 0x7f || n === 0x85 || n === 0x2028 || n === 0x2029);
+  return (
+    n !== undefined &&
+    (n <= 0x1f ||
+      (n >= 0x7f && n <= 0x9f) ||
+      n === 0x2028 ||
+      n === 0x2029 ||
+      (n >= 0x202a && n <= 0x202e) ||
+      (n >= 0x2066 && n <= 0x2069))
+  );
 };
-export const sanitizeLabel = (raw: string): string =>
-  Array.from(segmenter.segment(raw), (s) => s.segment)
+// 200 grapheme clusters of BMP astral pairs = 400 code units. A single cluster
+// can carry unbounded code points (ZWJ chains), so a code-unit hard cap keeps
+// log lines bounded even for pathological input.
+const maxLabelCodeUnits = 400;
+export const sanitizeLabel = (raw: string): string => {
+  const label = Array.from(segmenter.segment(raw), (s) => s.segment)
     .filter((c) => !isUnsafeChar(c))
     .slice(0, 200)
     .join('');
+  return label.length > maxLabelCodeUnits ? label.slice(0, maxLabelCodeUnits) : label;
+};
 
 /**
  * Resolves whichever delay variant is set into an absolute unix timestamp
@@ -82,6 +105,11 @@ export const resolveDelaySeconds = (
   const nowMs = Date.now();
 
   if (delayUntil !== undefined) {
+    // Duck-typed (not instanceof) so cross-realm Dates work; a JS caller
+    // passing a string or plain object gets a typed error, not a TypeError.
+    if (typeof delayUntil.getTime !== 'function') {
+      throw new SlothValidationError('delayUntil must be a Date');
+    }
     const ms = delayUntil.getTime();
     if (!Number.isFinite(ms)) throw new SlothValidationError('delayUntil is an invalid Date');
     const delayUntilUnix = Math.ceil(ms / 1000);
@@ -197,11 +225,18 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
   const acquire = (): Promise<ConfirmChannel> => {
     if (cached) return Promise.resolve(cached);
     if (inFlight) return inFlight;
-    inFlight = open().finally(() => {
-      pendingChan = null;
-      inFlight = null;
+    // Only clear state that still belongs to this attempt: a channel that died
+    // mid-open has already been cleared by `invalidate`, and a newer acquire
+    // may have started in the meantime — clobbering its state would strand the
+    // newer attempt's channel.
+    const attempt: Promise<ConfirmChannel> = open().finally(() => {
+      if (inFlight === attempt) {
+        pendingChan = null;
+        inFlight = null;
+      }
     });
-    return inFlight;
+    inFlight = attempt;
+    return attempt;
   };
 
   const send = async <TData>(params: SendDelayMessageParams<TData>): Promise<void> => {
@@ -252,7 +287,15 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
 
     const startTime = Date.now();
     try {
-      const chan = await acquire();
+      // The acquire (createConfirmChannel + assertExchange) is raced against
+      // the same signal as the confirm wait — a black-hole partition during
+      // channel-open would otherwise hang send() past its deadline. No loser
+      // cleanup: the shared open is abandoned, not killed, so other senders
+      // still benefit when it eventually resolves.
+      const chan = await raceWithAbort(acquire(), signal);
+      // Re-check after the race: if the abort fired in the same tick the
+      // acquire resolved, do not publish a message the caller has cancelled.
+      if (signal?.aborted) throw signal.reason as unknown;
       // ConfirmChannel.publish takes a callback that fires on broker ack/nack.
       // Wrapping it in a Promise turns the callback into the resolution signal:
       // resolve = broker accepted, reject = broker nacked or channel error.
@@ -263,9 +306,13 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
       const confirm = new Promise<void>((resolve, reject) => {
         const ok = chan.publish(
           slothRequestExchangeName,
-          'delay',
+          slothDelayRoutingKey,
           body,
           {
+            // deliveryMode 2 — wire parity with goamqp's publishMessage, so a
+            // broker restart before Sloth consumes the request cannot drop it.
+            persistent: true,
+            contentType: 'application/json',
             messageId,
             ...(params.correlationId !== undefined && { correlationId: params.correlationId }),
             headers,
@@ -304,7 +351,7 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
       emitWire(() => ({
         direction: 'out',
         exchange: slothRequestExchangeName,
-        routingKey: 'delay',
+        routingKey: slothDelayRoutingKey,
         content: body,
         headers,
         messageId,
@@ -331,7 +378,10 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
         durationMs: Date.now() - startTime,
         reason: errMessage(error),
       });
-      throw error;
+      // Typed-error contract: foreign failures (channel open, exchange assert,
+      // raw broker errors) surface as SlothPublishError with the cause chained;
+      // SlothErrors, DOMExceptions, and abort reasons propagate verbatim.
+      throw toSlothError(error, signal, SlothPublishError);
     }
   };
 

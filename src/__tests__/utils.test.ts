@@ -6,6 +6,7 @@ import {
   getSlothQueueName,
   getSlothTarget,
   slothClientProperties,
+  slothDelayRoutingKey,
   slothRequestExchangeName,
   slothResponseExchangeName,
 } from '../utils.js';
@@ -17,6 +18,10 @@ describe('protocol constants', () => {
 
   it('slothResponseExchangeName', () => {
     expect(slothResponseExchangeName).toBe('sloth.headers.exchange.response');
+  });
+
+  it('slothDelayRoutingKey', () => {
+    expect(slothDelayRoutingKey).toBe('delay');
   });
 });
 
@@ -96,6 +101,20 @@ describe('assertSafeSlothConfig', () => {
 
   it('rejects whitespace', () => {
     expect(() => assertSafeSlothConfig({ serviceName: 'a b', routingKey: 'k' })).toThrow();
+  });
+
+  it('accepts identifiers up to 200 chars and rejects longer ones', () => {
+    // 200 keeps every derived AMQP name (38-char queue prefix + serviceName)
+    // under the protocol's 255-byte short-string limit.
+    const max = 'a'.repeat(200);
+    expect(() => assertSafeSlothConfig({ serviceName: max, routingKey: max })).not.toThrow();
+    const over = 'a'.repeat(201);
+    expect(() => assertSafeSlothConfig({ serviceName: over, routingKey: 'k' })).toThrow(
+      'max 200 chars',
+    );
+    expect(() => assertSafeSlothConfig({ serviceName: 's', routingKey: over })).toThrow(
+      'routingKey',
+    );
   });
 });
 

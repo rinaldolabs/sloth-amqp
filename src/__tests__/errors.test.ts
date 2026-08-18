@@ -6,6 +6,7 @@ import {
   SlothPublishError,
   SlothTimeoutError,
   SlothValidationError,
+  toSlothError,
 } from '../errors.js';
 
 describe('errMessage', () => {
@@ -16,6 +17,53 @@ describe('errMessage', () => {
   it('stringifies a non-Error value', () => {
     expect(errMessage('plain string')).toBe('plain string');
     expect(errMessage(42)).toBe('42');
+  });
+
+  it('does not throw for a null-prototype object (String() itself throws)', () => {
+    expect(errMessage(Object.create(null))).toBe('[unstringifiable thrown value]');
+  });
+
+  it('does not throw when toString throws', () => {
+    const hostile = {
+      toString(): string {
+        throw new Error('gotcha');
+      },
+    };
+    expect(errMessage(hostile)).toBe('[unstringifiable thrown value]');
+  });
+});
+
+describe('toSlothError', () => {
+  it('passes SlothError instances through verbatim', () => {
+    const original = new SlothValidationError('bad input');
+    expect(toSlothError(original, undefined, SlothPublishError)).toBe(original);
+  });
+
+  it('passes DOMExceptions (abort/timeout) through verbatim', () => {
+    const timeout = new DOMException('timed out', 'TimeoutError');
+    expect(toSlothError(timeout, undefined, SlothConnectError)).toBe(timeout);
+  });
+
+  it('passes a caller abort reason through verbatim by identity', () => {
+    const reason = { custom: 'shutdown' };
+    const ac = new AbortController();
+    ac.abort(reason);
+    expect(toSlothError(reason, ac.signal, SlothConnectError)).toBe(reason);
+  });
+
+  it('wraps a foreign error in the given class with the cause chained', () => {
+    const foreign = new Error('ECONNRESET');
+    const wrapped = toSlothError(foreign, undefined, SlothConnectError);
+    expect(wrapped).toBeInstanceOf(SlothConnectError);
+    if (!(wrapped instanceof SlothConnectError)) throw new Error('unreachable');
+    expect(wrapped.message).toBe('ECONNRESET');
+    expect(wrapped.cause).toBe(foreign);
+  });
+
+  it('wraps a foreign error even when a signal exists but did not fire', () => {
+    const ac = new AbortController();
+    const wrapped = toSlothError(new Error('boom'), ac.signal, SlothPublishError);
+    expect(wrapped).toBeInstanceOf(SlothPublishError);
   });
 });
 

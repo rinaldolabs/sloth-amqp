@@ -52,8 +52,11 @@ Your listener
 ```ts
 import { createDelaySender, slothConnect } from '@rinaldolabs/sloth-amqp';
 
+const amqpUrl = process.env.AMQP_URL;
+if (!amqpUrl) throw new Error('AMQP_URL must be set');
+
 const config = { serviceName: 'my-service', routingKey: 'my.delayed' };
-const client = await slothConnect(process.env.AMQP_URL);
+const client = await slothConnect(amqpUrl);
 const { send } = createDelaySender(client);
 
 await send({
@@ -63,6 +66,8 @@ await send({
   logger: myLogger,
 });
 ```
+
+Messages are published **persistent** (`deliveryMode: 2`) with `contentType: application/json` — wire parity with the Go client, so a broker restart before Sloth consumes the request cannot drop it.
 
 Each call must specify **exactly one** of three delay variants:
 
@@ -74,12 +79,12 @@ await send({ data, config, logger, delayUntil: new Date('2030-01-01T00:00:00Z') 
 
 Optional fields on every variant:
 
-| Field       | Type            | Notes                                                                                                                      |
-| ----------- | --------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `logLabel`  | `string`        | Human-readable identifier used in log lines. Sanitized (control chars stripped, capped at 200 grapheme clusters).          |
-| `logLevel`  | `SlothLogLevel` | Minimum level for **this library's** log calls. The caller's logger is otherwise unchanged.                                |
-| `timeoutMs` | `number`        | Bounds the wait for the broker's publish confirm; on expiry `send` rejects with `SlothTimeoutError`. See the caveat below. |
-| `signal`    | `AbortSignal`   | Caller signal bounding the confirm wait (same semantics as `timeoutMs`).                                                   |
+| Field       | Type            | Notes                                                                                                                                       |
+| ----------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `logLabel`  | `string`        | Human-readable identifier used in log lines. Sanitized (control chars stripped, capped at 200 grapheme clusters).                           |
+| `logLevel`  | `SlothLogLevel` | Minimum level for **this library's** log calls. The caller's logger is otherwise unchanged.                                                 |
+| `timeoutMs` | `number`        | Bounds the whole publish — channel acquire **and** broker confirm; on expiry `send` rejects with `SlothTimeoutError`. See the caveat below. |
+| `signal`    | `AbortSignal`   | Caller signal bounding the same window. An abort that fires before the publish is issued rejects **without publishing**.                    |
 
 All variants are validated before any AMQP work happens: positive and finite numbers, valid `Date`, capped at ~100 years (`MAX_DELAY_SECONDS`). A `delayUntil` in the past is logged at `warn` and still published — Sloth will deliver immediately, matching the upstream Go client's behavior. If you set `logLevel: 'error'` (or wrap with `withLogLevel(..., 'error')`), this warning is suppressed; use `'warn'` or lower if you want to see past-date schedules.
 
@@ -92,13 +97,23 @@ import { setupDelayedMessageListener } from '@rinaldolabs/sloth-amqp';
 
 const config = { serviceName: 'my-service', routingKey: 'my.delayed' };
 
+const amqpUrl = process.env.AMQP_URL;
+if (!amqpUrl) throw new Error('AMQP_URL must be set');
+
 const handle = await setupDelayedMessageListener({
-  amqpUrl: process.env.AMQP_URL,
+  amqpUrl,
   config,
   logger: myLogger, // optional — defaults to NoOpLogger
   onMessage: async (message) => {
     const data = JSON.parse(message.content.toString()) as { key: string };
     // dispatch on data.key here
+  },
+  onClosed: (reason) => {
+    // The listener died without close() being called — see the supervision
+    // note below. Re-run setupDelayedMessageListener, or exit and let the
+    // orchestrator restart the process.
+    myLogger.error(`sloth listener closed: ${reason}`);
+    process.exit(1);
   },
 });
 
@@ -116,13 +131,16 @@ await using handle = await setupDelayedMessageListener({ amqpUrl, config, onMess
 
 Optional fields on `setupDelayedMessageListener`:
 
-| Field            | Type     | Default | Notes                                                                                                                                                                                        |
-| ---------------- | -------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `queueExpiresMs` | `number` | 5 days  | Auto-expiry for the response queue when no consumer is connected (`x-expires`). Must be positive and finite.                                                                                 |
-| `prefetch`       | `number` | `20`    | Consumer prefetch (QoS) — max unacknowledged messages delivered at once. Sloth re-delivers in bursts, so a bounded window caps memory. `0` = unlimited. Must be a non-negative integer.      |
-| `graceTimeoutMs` | `number` | `10000` | How long `handle.close()` waits for in-flight `onMessage` handlers to settle (after cancelling the consumer) before closing the channel. `0` skips the wait. Must be a non-negative integer. |
+| Field            | Type                                          | Default | Notes                                                                                                                                                                                        |
+| ---------------- | --------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queueExpiresMs` | `number`                                      | 5 days  | Auto-expiry for the response queue when no consumer is connected (`x-expires`). Must be a positive integer.                                                                                  |
+| `prefetch`       | `number`                                      | `20`    | Consumer prefetch (QoS) — max unacknowledged messages delivered at once. Sloth re-delivers in bursts, so a bounded window caps memory. `0` = unlimited. Must be a non-negative integer.      |
+| `graceTimeoutMs` | `number`                                      | `10000` | How long `handle.close()` waits for in-flight `onMessage` handlers to settle (after cancelling the consumer) before closing the channel. `0` skips the wait. Must be a non-negative integer. |
+| `onClosed`       | `(reason: SlothListenerClosedReason) => void` | —       | Opt-in death notification — see the supervision note below.                                                                                                                                  |
 
 > **Shutdown & at-least-once.** `handle.close()` cancels the consumer (no new deliveries), waits up to `graceTimeoutMs` for in-flight handlers to finish, then closes the channel and connection. A clean drain avoids the broker requeuing messages a handler was mid-way through — but if a handler is still running when the grace period elapses (or you set `graceTimeoutMs: 0`), its message is requeued and redelivered (`redelivered: true`) on next connect. Delivery is at-least-once either way, so handlers must be idempotent.
+
+> **Supervision — the listener does not reconnect.** The listener owns an internal AMQP connection; if that connection drops (broker restart, heartbeat timeout), the broker closes the channel, or the consumer is cancelled server-side (queue deleted, node failover), the consumer is **dead** and no further messages arrive. The library logs the event and — if you passed `onClosed` — calls it exactly once with the reason (`'connection-closed'` | `'channel-closed'` | `'consumer-cancelled'`; never for your own `close()`). Production deployments must react: re-run `setupDelayedMessageListener` with backoff, or exit and let the orchestrator restart the process. Note that `ping()` probes the **sender's** connection, not the listener's — a dead listener does not fail your readiness probe by itself.
 
 ### Health checks
 
@@ -212,9 +230,14 @@ Every log call from this package emits an object-first second argument with a st
 | `sloth.listener.nack_failed`              | error | listener        | + `messageId`, `correlationId`, `reason`                               |
 | `sloth.listener.channel_error`            | error | listener        | + `reason`                                                             |
 | `sloth.listener.channel_closed`           | warn  | listener        | `serviceName`, `routingKey`                                            |
+| `sloth.listener.connection_error`         | error | listener        | + `reason`                                                             |
+| `sloth.listener.connection_closed`        | warn  | listener        | `serviceName`, `routingKey`                                            |
+| `sloth.listener.consumer_cancelled`       | warn  | listener        | `serviceName`, `routingKey`                                            |
 | `sloth.listener.consumer_cancel_failed`   | error | listener        | + `consumerTag`, `reason`                                              |
+| `sloth.listener.on_closed_failed`         | error | listener        | + `reason`                                                             |
 | `sloth.listener.resources_release_failed` | error | listener        | + `reason`                                                             |
 | `sloth.listener.setup_failed`             | error | listener        | + `reason`                                                             |
+| `sloth.ping.channel_error`                | debug | ping            | `reason`                                                               |
 | `sloth.ping.failed`                       | error | ping            | `reason`                                                               |
 | `sloth.wire.hook_failed`                  | warn  | sender/listener | `direction`, `reason`                                                  |
 
@@ -225,9 +248,9 @@ Every error this library throws extends `SlothError`, which carries a readonly `
 | Class                  | `code`             | Thrown when                                                                                                                                                                                                  |
 | ---------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `SlothValidationError` | `SLOTH_VALIDATION` | Invalid input caught at a boundary before any AMQP work (delay spec, config, `amqpUrl`, `queueExpiresMs`, `prefetch`, `timeoutMs`, reserved headers, non-serializable `data`). A caller bug — fix the input. |
-| `SlothPublishError`    | `SLOTH_PUBLISH`    | A publish failed — broker nack or a channel that died before the publisher was ready. The original cause is chained on `error.cause`.                                                                        |
+| `SlothPublishError`    | `SLOTH_PUBLISH`    | A publish failed — broker nack, channel open/assert failure, or a channel that died before the publisher was ready. The original amqplib/broker cause is chained on `error.cause`.                           |
 | `SlothTimeoutError`    | `SLOTH_TIMEOUT`    | A `send` exceeded its `timeoutMs` / `signal` deadline (see [Cancellation and timeouts](#cancellation-and-timeouts)).                                                                                         |
-| `SlothConnectError`    | `SLOTH_CONNECT`    | Connection or listener setup failed against the broker; the amqplib cause is chained on `error.cause`.                                                                                                       |
+| `SlothConnectError`    | `SLOTH_CONNECT`    | `slothConnect`, `ping`, or listener setup failed against the broker; the amqplib cause is chained on `error.cause`.                                                                                          |
 
 ```ts
 import { SlothTimeoutError, SlothValidationError } from '@rinaldolabs/sloth-amqp';
@@ -245,7 +268,9 @@ try {
 }
 ```
 
-Abort/timeout raised from a caller's **own** `AbortSignal` still surfaces as the WHATWG `DOMException` (`AbortError` / `TimeoutError`), not a `SlothError` — see [Cancellation and timeouts](#cancellation-and-timeouts).
+Abort/timeout raised from a caller's **own** `AbortSignal` still surfaces as the WHATWG `DOMException` (`AbortError` / `TimeoutError`) — or the caller's custom abort reason **verbatim** — never wrapped in a `SlothError`. See [Cancellation and timeouts](#cancellation-and-timeouts).
+
+> **Dual-package note on `instanceof`.** If your process somehow loads both the ESM and CJS builds (see the installation note above), each build has its own class identities and `instanceof SlothError` can fail across them. The `code` property is format-independent — prefer `err.code === 'SLOTH_TIMEOUT'`-style narrowing in code that might run in mixed-module setups.
 
 ### Cancellation and timeouts
 
@@ -367,7 +392,30 @@ const client2 = await slothConnect(process.env.AMQP_URL, {
 
 `connectionName` is sent as `clientProperties.connection_name` and takes precedence over any `connection_name` in `clientProperties`. Do not put the AMQP URL, credentials, or other secrets in `clientProperties` — they are visible in the broker's management UI. The default hostname is a pod/task id in container environments but may be a personal machine name locally; pass an explicit `connectionName` when that matters.
 
-## Public exports
+### TLS, heartbeats, and socket options
+
+`SlothConnectOptions.socketOptions` passes straight through as amqplib's second `connect` argument. That is the hook for mutual TLS on `amqps://` URLs and for amqplib's opt-in connection recovery:
+
+```ts
+const client = await slothConnect('amqps://broker.internal:5671', {
+  connectionName: 'orders-worker@pod-7',
+  socketOptions: {
+    ca: [fs.readFileSync('/etc/tls/ca.pem')],
+    cert: fs.readFileSync('/etc/tls/client.pem'),
+    key: fs.readFileSync('/etc/tls/client.key'),
+  },
+});
+```
+
+A `clientProperties` key inside `socketOptions` is merged underneath the dedicated `clientProperties` / `connectionName` options (the dedicated ones win). Heartbeats are tuned via the URL query string (`amqp://…?heartbeat=30`); note that `heartbeat=0` genuinely disables them on amqplib v2 — see the publish-timeout caveat above.
+
+## Operating in production
+
+- **Connection ownership and `'error'` events.** The `ChannelModel` returned by `slothConnect` is yours — attach an `'error'` handler (see [Setup composition](#setup-composition)); an unhandled `'error'` event crashes a Node process. During `slothConnect`'s own setup window, and on every connection/channel the library creates internally (listener, ping), the library guards this for you.
+- **Reconnection.** The **sender** transparently re-creates its cached channel after a channel-level error/close, and composes with amqplib's opt-in connection `recovery` (pass it via `socketOptions`) — after the connection recovers, the next `send` opens a fresh channel. The **listener** does not reconnect: supervise it via `onClosed` (see the supervision note above).
+- **Broker alarms (`blocked`).** When RabbitMQ hits a resource alarm it accepts publishes but stalls confirms. A `send` with `timeoutMs` then rejects with `SlothTimeoutError` even though the broker is up. Subscribe to `client.on('blocked', ...)` / `'unblocked'` on the connection to tell the two apart in dashboards.
+- **Back-pressure.** When the channel's write buffer is full, `publish` queues in memory and the library logs `sloth.publish.back_pressured` (it does not wait for `'drain'`). Sequential `await send(...)` callers are naturally throttled by the confirm; bound your own concurrency if you fire many unawaited sends.
+- **Clock skew.** `delayMinutes`/`delaySeconds` are resolved to an absolute `delay-until` timestamp using the **producer's** clock. If your hosts drift, delivery drifts with them — use `delayUntil` with a trusted clock source when exact wall-clock delivery matters.
 
 Everything below is re-exported from the package root.
 
@@ -377,10 +425,14 @@ Everything below is re-exported from the package root.
 import {
   slothRequestExchangeName, // "sloth.direct.exchange.request"
   slothResponseExchangeName, // "sloth.headers.exchange.response"
+  slothDelayRoutingKey, // "delay"
   defaultListenerQueueExpiresMs, // 5 days, in ms
+  defaultListenerPrefetch, // 20
+  defaultListenerGraceTimeoutMs, // 10 seconds, in ms
   getSlothQueueName, // (config) => "sloth.headers.exchange.response.queue.<serviceName>"
   getSlothTarget, // (config) => "amqp://<serviceName>/<routingKey>"
   assertSafeSlothConfig, // throws if serviceName/routingKey contain unsafe chars
+  slothClientProperties, // ({ serviceName, connectionName? }) => clientProperties object
 } from '@rinaldolabs/sloth-amqp';
 ```
 
@@ -395,18 +447,42 @@ import {
 } from '@rinaldolabs/sloth-amqp';
 ```
 
+### Errors and loggers
+
+```ts
+import {
+  SlothError, // abstract base — instanceof-narrow or branch on `code`
+  SlothValidationError,
+  SlothPublishError,
+  SlothTimeoutError,
+  SlothConnectError,
+  NoOpLogger, // the default logger — discards everything
+  consoleLogger, // console-backed shim for scripts/demos
+  withLogLevel, // (logger, minLevel) => level-filtered logger
+} from '@rinaldolabs/sloth-amqp';
+```
+
 ### Types
 
 ```ts
 import type {
   SlothConfig,
+  SlothConnectOptions,
+  SlothErrorCode,
   SlothLogger,
   SlothLogLevel,
   SlothSetup,
   SlothListenerOptions,
   SlothListenerHandle,
+  SlothListenerClosedReason,
   SendDelayMessageParams,
+  DelaySender,
   DelaySpec,
+  PingOptions,
+  OnWireMessage,
+  SlothWireEvent,
+  SlothWireInbound,
+  SlothWireOutbound,
 } from '@rinaldolabs/sloth-amqp';
 ```
 
@@ -416,14 +492,15 @@ import type {
 | ---------------------------------------------------- | -------------------------- | -------------------- | ------------------------- | ------------------- |
 | Sloth wire protocol (delayed messages over AMQP)     | ✅ first-class             | ❌ build it yourself | ❌ build it yourself      | ❌ different system |
 | Confirm-channel publish with broker ack              | ✅ auto                    | manual               | ✅                        | n/a                 |
-| Auto-recreate channel on broker error/close          | ✅                         | manual               | ✅                        | n/a                 |
+| Auto-recreate channel on broker error/close (sender) | ✅                         | manual               | ✅                        | n/a                 |
+| Listener death notification (`onClosed`)             | ✅ opt-in callback         | manual               | event-based               | n/a                 |
 | `AbortSignal` + `timeoutMs` on connect/setup         | ✅ verbatim WHATWG reasons | ❌                   | ❌                        | partial             |
 | `messageId` auto-UUID + `correlationId` propagation  | ✅                         | manual               | manual                    | ✅                  |
 | W3C trace-context (`traceparent`) header passthrough | ✅ via `headers`           | manual               | manual                    | partial             |
 | Health-check helper (`ping`)                         | ✅                         | manual               | manual                    | n/a                 |
 | Dual ESM + CJS published                             | ✅                         | ✅                   | ✅                        | ✅                  |
 | Built-in TypeScript types (no `@types/*`)            | ✅                         | ✅                   | ✅                        | ✅                  |
-| Zero runtime dependencies                            | ✅ (amqplib is a peer dep) | n/a                  | adds reconnect-core       | many                |
+| Zero runtime dependencies                            | ✅ (amqplib is a peer dep) | n/a                  | adds promise-breaker      | many                |
 | Object-first structured log events                   | ✅ stable contract         | n/a                  | n/a                       | partial             |
 | Bundle size (minified+brotli)                        | ~4 KB per format           | n/a                  | larger                    | much larger         |
 | npm provenance (Sigstore)                            | ✅                         | varies               | varies                    | varies              |
@@ -440,6 +517,8 @@ Headers sent with each delayed message:
 | ------------- | ---------------------- | --------------------------------------------------------- |
 | `delay-until` | `int64` (unix seconds) | When to deliver the message                               |
 | `target`      | `string` (AMQP URL)    | Response destination: `amqp://<serviceName>/<routingKey>` |
+
+Requests are published to `sloth.direct.exchange.request` with routing key `delay`, `deliveryMode: 2` (persistent) and `contentType: application/json` — the same message properties goamqp's `publishMessage` sets, so requests survive a broker restart while queued ahead of the Sloth consumer.
 
 ## Compared to the Go client
 

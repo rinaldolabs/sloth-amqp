@@ -1,4 +1,13 @@
-export const errMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+export const errMessage = (e: unknown): string => {
+  if (e instanceof Error) return e.message;
+  try {
+    return String(e);
+  } catch {
+    // String() itself throws for null-prototype objects and values whose
+    // toString/Symbol.toPrimitive throw — never let the error reporter throw.
+    return '[unstringifiable thrown value]';
+  }
+};
 
 /**
  * Stable, machine-readable discriminant on every {@link SlothError}. Lets
@@ -49,3 +58,27 @@ export class SlothTimeoutError extends SlothError {
 export class SlothConnectError extends SlothError {
   readonly code = 'SLOTH_CONNECT';
 }
+
+/**
+ * Applies the library's throw contract to a caught value: {@link SlothError}s,
+ * WHATWG `DOMException`s (abort/timeout), and the caller's own abort `reason`
+ * pass through verbatim; anything foreign (amqplib, broker, socket) is wrapped
+ * in the given class with the original chained as `cause`. Returns the value to
+ * throw — callsites do `throw toSlothError(error, signal, SlothConnectError)`.
+ *
+ * Internal helper — intentionally not re-exported from the package barrel.
+ */
+export const toSlothError = (
+  error: unknown,
+  signal: AbortSignal | undefined,
+  Wrap: new (message: string, options?: { cause?: unknown }) => SlothError,
+): unknown => {
+  if (
+    error instanceof SlothError ||
+    error instanceof DOMException ||
+    (signal?.aborted && error === signal.reason)
+  ) {
+    return error;
+  }
+  return new Wrap(errMessage(error), { cause: error });
+};

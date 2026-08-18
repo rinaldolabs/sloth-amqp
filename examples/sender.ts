@@ -22,6 +22,7 @@ await send({
   logger: consoleLogger,
   config: { serviceName: 'example-service', routingKey: 'example.reminder' },
   logLabel: 'reminder',
+  timeoutMs: 5_000, // bounds the broker-confirm wait
 });
 
 await slothClose(client);

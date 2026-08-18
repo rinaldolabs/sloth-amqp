@@ -9,6 +9,9 @@ concurrency:
   group: release-please
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   release-please:
     runs-on: ubuntu-24.04
@@ -21,10 +24,35 @@ jobs:
       tag_name: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
     steps:
+      # GITHUB_TOKEN cannot cascade workflow events: release PRs it creates
+      # don't trigger pull_request workflows, and pushes it makes don't trigger
+      # this workflow. Wiring a GitHub App (vars.RELEASE_APP_ID +
+      # secrets.RELEASE_APP_PRIVATE_KEY) lifts that limitation without workflow
+      # edits — until then, the steps below fall back to github.token.
+      - uses: actions/create-github-app-token@v2
+        if: vars.RELEASE_APP_ID != ''
+        id: app-token
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          # Scope the token to what release-please needs, not the App's full
+          # grant (labels go through the issues API).
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      # Two-phase invocation: tag/release the merged release PR first, then
+      # open/refresh the next release PR. A combined invocation aborts on
+      # "untagged outstanding PRs" before the release phase can fire.
       - uses: googleapis/release-please-action@v5
         id: release
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          skip-github-pull-request: true
+          token: ${{ steps.app-token.outputs.token || github.token }}
+      - uses: googleapis/release-please-action@v5
+        id: release-pr
+        with:
+          skip-github-release: true
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
   publish:
     needs: release-please
@@ -35,13 +63,15 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
           registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run lint
       - run: npm run lint:lockfile
       - run: npm run type-check
@@ -51,13 +81,44 @@ jobs:
       - name: Enforce size budget
         run: npm run size
       - run: npm run coverage
+      # OIDC trusted publishing — no NPM_TOKEN / NODE_AUTH_TOKEN anywhere.
+      # publishConfig in package.json pins access/registry/provenance, and
+      # provenance is generated automatically under OIDC. One-time setup on
+      # npmjs.com (package Settings → Trusted Publisher): org rinaldolabs,
+      # repo sloth-amqp, workflow release.yml, allowed action 'npm publish'.
+      # The first-ever publish must happen manually — a trusted publisher can
+      # only be configured on a package that already exists.
+      - name: Publish to npm (OIDC trusted publishing)
+        run: npm publish
+
+  # The SBOM must outlive the 90-day workflow-artifact retention (CRA
+  # vulnerability-reporting obligations), so attach it to the GitHub release;
+  # the workflow artifact below is only a secondary copy.
+  attach-sbom:
+    needs: [release-please, publish]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+      - run: npm ci --ignore-scripts
       - name: Generate SBOM
         run: npm run sbom
-      - name: Publish to npm with Sigstore provenance
-        run: npm publish --provenance --access public
+      - name: Attach SBOM to the GitHub release
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Upload SBOM
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release upload "$TAG" sbom.json
+      - name: Upload SBOM artifact (secondary copy)
         uses: actions/upload-artifact@v7
         with:
           name: sbom-${{ needs.release-please.outputs.version }}

@@ -7,6 +7,10 @@ import { SlothValidationError } from './errors.js';
 export const slothRequestExchangeName = 'sloth.direct.exchange.request';
 export const slothResponseExchangeName = 'sloth.headers.exchange.response';
 
+// Routing key for delay requests — matches goamqp ServiceRequestConsumer("delay", ...)
+// in the Sloth amqp plugin. Part of the wire contract; not configurable.
+export const slothDelayRoutingKey = 'delay';
+
 export const defaultListenerQueueExpiresMs = 5 * 24 * 60 * 60 * 1000;
 
 // Default consumer prefetch (QoS). A bounded window protects against holding a
@@ -27,11 +31,13 @@ export interface SlothConfig {
   routingKey: string;
 }
 
-const safeIdentifier = /^[A-Za-z0-9._-]+$/;
+// Bounded at 200 chars so derived AMQP names stay under the protocol's 255-byte
+// short-string limit (longest derivation: 38-char queue prefix + serviceName).
+const safeIdentifier = /^[A-Za-z0-9._-]{1,200}$/;
 
 const assertSafeIdentifier = (value: string, fieldName: string): void => {
   if (typeof value !== 'string' || !safeIdentifier.test(value)) {
-    throw new SlothValidationError(`${fieldName} must match [A-Za-z0-9._-]+`);
+    throw new SlothValidationError(`${fieldName} must match [A-Za-z0-9._-]+ (max 200 chars)`);
   }
 };
 

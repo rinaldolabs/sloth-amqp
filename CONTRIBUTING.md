@@ -7,7 +7,9 @@ high; this guide explains how to clear it.
 
 ## Prerequisites
 
-- Node.js `^24.17.0` and npm `^11.17.0` (see `engines` in `package.json`; an `.nvmrc` is provided)
+- Node.js `>= 22` is the supported floor (see `engines` in `package.json`); development
+  happens on the `.nvmrc` version (Node 24), and CI tests both. npm `>= 11.5.1` is only
+  needed for publishing (OIDC trusted publishing)
 - [Docker](https://www.docker.com/) — only needed to run the integration tests
 - Install dependencies with `npm ci` (reproducible from the committed lock file)
 
@@ -24,6 +26,7 @@ npm run lint:packaging # publint + are-the-types-wrong (node16 profile)
 npm run lint:lockfile # lockfile-lint — host=npm, scheme=https, integrity required
 npm run size          # size-limit — bundle stays within budget
 npm audit --omit=dev --audit-level=high  # consumer-facing audit must be clean
+npm audit --audit-level=critical         # full tree incl. dev — nothing critical
 ```
 
 **Coverage is 100%, `perFile`.** Every new branch needs a test. There is no exception —
@@ -73,7 +76,20 @@ commitlint validates PR titles and commit messages. A guided flow is available v
 
 ### First-publish checklist
 
-The package publishes to npm with [Sigstore provenance](https://docs.npmjs.com/generating-provenance-statements) (`provenance: true` in `publishConfig`). On the **first** release, confirm `npm publish --provenance` actually succeeds — provenance requires `repository.url` in `package.json` to match the build's source URI, and a `git+https://…` vs HTTPS mismatch can fail the publish with a 422. After publishing, verify with `npm audit signatures`.
+Releases publish to npm via [OIDC trusted publishing](https://docs.npmjs.com/trusted-publishers)
+(no `NPM_TOKEN` anywhere), with [Sigstore provenance](https://docs.npmjs.com/generating-provenance-statements)
+generated automatically (`provenance: true` in `publishConfig`). Two one-time steps:
+
+1. The **first-ever** publish must be done manually (`npm publish` from a checkout, with an
+   npm account that owns the `@rinaldolabs` scope) — a trusted publisher can only be
+   configured on a package that already exists. Provenance requires `repository.url` in
+   `package.json` to match the source URI; a `git+https://…` vs HTTPS mismatch can fail the
+   publish with a 422.
+2. Then configure the Trusted Publisher on npmjs.com (package Settings → Trusted Publisher):
+   org `rinaldolabs`, repo `sloth-amqp`, workflow `release.yml`. Every later release is
+   published by CI (`.github/workflows/release.yml`) with no registry credentials.
+
+After publishing, verify with `npm audit signatures`.
 
 ## Pull requests
 

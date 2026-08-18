@@ -1,8 +1,12 @@
 import amqp, { type Channel, type ChannelModel, type ConsumeMessage } from 'amqplib';
 import { combineAbort, raceWithAbort, safeClose } from './abort.js';
-import { errMessage, SlothConnectError, SlothError, SlothValidationError } from './errors.js';
+import { errMessage, SlothConnectError, SlothValidationError, toSlothError } from './errors.js';
 import { NoOpLogger, resolveLogger } from './logger.js';
-import type { SlothListenerHandle, SlothListenerOptions } from './types.js';
+import type {
+  SlothListenerClosedReason,
+  SlothListenerHandle,
+  SlothListenerOptions,
+} from './types.js';
 import {
   assertSafeSlothConfig,
   defaultListenerGraceTimeoutMs,
@@ -25,13 +29,16 @@ export async function setupDelayedMessageListener({
   signal: rawSignal,
   timeoutMs,
   onWireMessage,
+  onClosed,
 }: SlothListenerOptions): Promise<SlothListenerHandle> {
   if (!amqpUrl) {
     throw new SlothValidationError('amqpUrl must not be empty');
   }
   assertSafeSlothConfig(config);
-  if (!Number.isFinite(queueExpiresMs) || queueExpiresMs <= 0) {
-    throw new SlothValidationError('queueExpiresMs must be a positive finite number');
+  // Integer like its sibling options — RabbitMQ's x-expires argument rejects
+  // fractional values with a channel error, so fail at the boundary instead.
+  if (!Number.isInteger(queueExpiresMs) || queueExpiresMs <= 0) {
+    throw new SlothValidationError('queueExpiresMs must be a positive integer');
   }
   if (!Number.isInteger(prefetch) || prefetch < 0) {
     throw new SlothValidationError('prefetch must be a non-negative integer');
@@ -53,6 +60,29 @@ export async function setupDelayedMessageListener({
 
   let connection: ChannelModel | null = null;
   let channel: Channel | null = null;
+  // Death-notification state for the opt-in onClosed callback. `armed` flips
+  // true only after setup succeeds (mid-setup failures reject the returned
+  // promise instead); `userClosing` suppresses the teardown events that
+  // close() itself provokes; `closedNotified` makes the callback fire at most
+  // once even when connection- and channel-close cascade together.
+  let armed = false;
+  let userClosing = false;
+  let closedNotified = false;
+  const notifyClosed = (reason: SlothListenerClosedReason): void => {
+    if (!armed || userClosing || closedNotified) return;
+    closedNotified = true;
+    if (!onClosed) return;
+    try {
+      onClosed(reason);
+    } catch (error) {
+      logger.error(`sloth: onClosed callback threw: ${errMessage(error)}`, {
+        event: 'sloth.listener.on_closed_failed',
+        serviceName: config.serviceName,
+        routingKey: config.routingKey,
+        reason: errMessage(error),
+      });
+    }
+  };
   // Number of onMessage handlers currently executing. close() waits for this to
   // reach 0 (bounded by graceTimeoutMs) after cancelling the consumer, so the
   // broker doesn't requeue messages a handler was mid-way through.
@@ -79,25 +109,36 @@ export async function setupDelayedMessageListener({
     });
   };
 
+  // Each resource is closed in its own try/catch: channel.close() rejects with
+  // IllegalOperationError whenever the broker already closed the channel, and
+  // a shared block would then skip connection.close() — leaking the internal
+  // TCP socket (the caller has no reference to it).
+  const logReleaseFailed = (error: unknown): void => {
+    logger.error(`sloth: failed to release listener resources: ${errMessage(error)}`, {
+      event: 'sloth.listener.resources_release_failed',
+      serviceName: config.serviceName,
+      routingKey: config.routingKey,
+      reason: errMessage(error),
+    });
+  };
   const closeResources = async (): Promise<void> => {
-    try {
-      if (channel) {
-        const c = channel;
-        channel = null;
+    if (channel) {
+      const c = channel;
+      channel = null;
+      try {
         await c.close();
+      } catch (error) {
+        logReleaseFailed(error);
       }
-      if (connection) {
-        const c = connection;
-        connection = null;
+    }
+    if (connection) {
+      const c = connection;
+      connection = null;
+      try {
         await c.close();
+      } catch (error) {
+        logReleaseFailed(error);
       }
-    } catch (error) {
-      logger.error(`sloth: failed to release listener resources: ${errMessage(error)}`, {
-        event: 'sloth.listener.resources_release_failed',
-        serviceName: config.serviceName,
-        routingKey: config.routingKey,
-        reason: errMessage(error),
-      });
     }
   };
 
@@ -142,6 +183,28 @@ export async function setupDelayedMessageListener({
     // `safeClose` cleanup closes any resource that resolves *after* the
     // signal fires, so we don't leak sockets/channels in the abort path.
     connection = await raceWithAbort(amqp.connect(amqpUrl), signal, safeClose);
+
+    // amqplib emits 'error' on the ChannelModel for connection-level failures
+    // (heartbeat timeout, ECONNRESET, server close-with-error). This internal
+    // connection is never exposed to the caller, so without a listener here an
+    // EventEmitter 'error' with zero listeners would crash the process.
+    connection.on('error', (err: unknown) => {
+      logger.error(`sloth: listener connection error: ${errMessage(err)}`, {
+        event: 'sloth.listener.connection_error',
+        serviceName: config.serviceName,
+        routingKey: config.routingKey,
+        reason: errMessage(err),
+      });
+    });
+    connection.on('close', () => {
+      logger.warn('sloth: listener connection closed', {
+        event: 'sloth.listener.connection_closed',
+        serviceName: config.serviceName,
+        routingKey: config.routingKey,
+      });
+      notifyClosed('connection-closed');
+    });
+
     channel = await raceWithAbort(connection.createChannel(), signal, safeClose);
 
     channel.on('error', (err: unknown) => {
@@ -162,6 +225,7 @@ export async function setupDelayedMessageListener({
         serviceName: config.serviceName,
         routingKey: config.routingKey,
       });
+      notifyClosed('channel-closed');
     });
 
     // Bound the unacked-message window before declaring anything, so a burst of
@@ -194,8 +258,17 @@ export async function setupDelayedMessageListener({
       channel.consume(
         queueName,
         (message) => {
-          // null = broker cancelled this consumer server-side; nothing to ack.
-          if (!message) return;
+          // null = broker cancelled this consumer server-side (queue deleted,
+          // node failover); nothing to ack, and no more deliveries will come.
+          if (!message) {
+            logger.warn('sloth: consumer cancelled by broker', {
+              event: 'sloth.listener.consumer_cancelled',
+              serviceName: config.serviceName,
+              routingKey: config.routingKey,
+            });
+            notifyClosed('consumer-cancelled');
+            return;
+          }
           // Defend the handler against a structurally-unusable delivery (no
           // content Buffer to read). Route it to the DLX rather than letting
           // onMessage throw on message.content.toString() — that would surface
@@ -227,7 +300,11 @@ export async function setupDelayedMessageListener({
             };
           });
           inFlight++;
-          onMessage(message)
+          // Promise.resolve().then(...) contains a synchronously-throwing or
+          // non-promise-returning onMessage: either still routes through the
+          // .catch → nack path instead of escaping the consume callback.
+          Promise.resolve()
+            .then(() => onMessage(message))
             .then(() => {
               safeAck(message);
             })
@@ -260,7 +337,14 @@ export async function setupDelayedMessageListener({
       consumerTag,
     });
 
+    // Setup succeeded — from here on, death is reported via onClosed instead
+    // of a rejected setup promise.
+    armed = true;
+
     const close = async (): Promise<void> => {
+      // Caller-initiated shutdown — the channel/connection close events this
+      // provokes must not fire the onClosed death notification.
+      userClosing = true;
       try {
         if (channel) {
           // cancel() guarantees no further deliveries once it resolves, so
@@ -293,9 +377,9 @@ export async function setupDelayedMessageListener({
       reason: errMessage(error),
     });
     await closeResources();
-    // Surface our own errors and WHATWG abort/timeout reasons verbatim; wrap a
-    // foreign (amqplib/broker) failure as SlothConnectError with the cause.
-    if (error instanceof SlothError || error instanceof DOMException) throw error;
-    throw new SlothConnectError(errMessage(error), { cause: error });
+    // Surface our own errors, WHATWG abort/timeout reasons, and caller abort
+    // reasons verbatim; wrap a foreign (amqplib/broker) failure as
+    // SlothConnectError with the cause chained.
+    throw toSlothError(error, signal, SlothConnectError);
   }
 }

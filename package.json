@@ -26,7 +26,7 @@
     "NOTICE"
   ],
   "engines": {
-    "node": ">=22.23.1"
+    "node": ">=22.0.0"
   },
   "publishConfig": {
     "access": "public",
@@ -43,7 +43,6 @@
     "@cyclonedx/cyclonedx-npm": "6.0.0",
     "@eslint/js": "^10.0.1",
     "@size-limit/preset-small-lib": "^13.0.3",
-    "@types/amqplib": "0.10.8",
     "@types/node": "^24.13.3",
     "@vitest/coverage-v8": "4.1.10",
     "amqplib": "2.0.1",
@@ -76,7 +75,7 @@
     "lint:packaging": "publint && attw --pack --profile node16",
     "size": "size-limit",
     "size:why": "size-limit --why",
-    "sbom": "cyclonedx-npm --output-file sbom.json",
+    "sbom": "cyclonedx-npm --omit dev --output-file sbom.json",
     "prepublishOnly": "npm run lint && npm run format:check && npm run type-check && npm run build && npm run lint:packaging && npm run size && npm run coverage"
   },
   "keywords": [

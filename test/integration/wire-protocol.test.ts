@@ -102,6 +102,13 @@ describe('publish path: createDelaySender produces the wire format Sloth expects
       expect(msg.fields.exchange).toBe(slothRequestExchangeName);
       expect(msg.fields.routingKey).toBe('delay');
 
+      // Durability parity with goamqp's publishMessage: persistent delivery
+      // (a broker restart before Sloth consumes must not drop the request)
+      // and an explicit JSON content type.
+      expect(msg.properties.deliveryMode).toBe(2);
+      expect(msg.properties.contentType).toBe('application/json');
+      expect(typeof msg.properties.messageId).toBe('string');
+
       const target = headers['target'];
       expect(target).toBe('amqp://integration-test/integration.key');
       // Sanity: matches the URL shape Sloth's url.Parse + Path[1:] expects (no trailing /).
@@ -162,6 +169,116 @@ describe('consume path: setupDelayedMessageListener consumes responses Sloth pro
       expect(msg.fields.routingKey).toBe(config.routingKey);
       const payload = JSON.parse(msg.content.toString()) as Record<string, unknown>;
       expect(payload).toEqual({ delivered: true, n: 42 });
+    } finally {
+      await publisherConn.close().catch(() => {});
+    }
+  });
+});
+
+describe('consume path: the headers binding actually discriminates by service', () => {
+  it('delivers only messages whose service header matches; wrong or absent headers are dropped', async () => {
+    // A broken binding that matched everything (e.g. empty binding args under
+    // x-match:all) would pass the positive test above — only a negative case
+    // proves service isolation on the shared response exchange.
+    const isolationConfig: SlothConfig = {
+      serviceName: 'integration-isolation',
+      routingKey: 'integration.isolation.key',
+    };
+    const received: string[] = [];
+    let resolveMatched!: () => void;
+    const matched = new Promise<void>((resolve) => {
+      resolveMatched = resolve;
+    });
+
+    const handle = await setupDelayedMessageListener({
+      amqpUrl,
+      config: isolationConfig,
+      logger: silentLogger,
+      onMessage: (message) => {
+        const payload = JSON.parse(message.content.toString()) as { id: string };
+        received.push(payload.id);
+        if (payload.id === 'match') resolveMatched();
+        return Promise.resolve();
+      },
+    });
+    listenerHandles.push(handle);
+
+    const publisherConn = await amqp.connect(amqpUrl);
+    try {
+      const publisherCh = await publisherConn.createChannel();
+      await publisherCh.assertExchange(slothResponseExchangeName, 'headers', { durable: true });
+      const publish = (id: string, headers: Record<string, unknown>): void => {
+        publisherCh.publish(
+          slothResponseExchangeName,
+          isolationConfig.routingKey,
+          Buffer.from(JSON.stringify({ id })),
+          { headers, persistent: true },
+        );
+      };
+      // Mismatched and headerless messages first, the matching one last — if
+      // any of the first two were wrongly delivered, they would arrive before
+      // 'match' and break the assertion below. No sleeps needed.
+      publish('wrong-service', { service: 'some-other-service' });
+      publish('no-header', {});
+      publish('match', { service: isolationConfig.serviceName });
+
+      await matched;
+      expect(received).toEqual(['match']);
+    } finally {
+      await publisherConn.close().catch(() => {});
+    }
+  });
+});
+
+describe('nack path: a failing handler drops the message (requeue=false)', () => {
+  it('nacks without redelivery and keeps consuming subsequent messages', async () => {
+    const nackConfig: SlothConfig = {
+      serviceName: 'integration-nack',
+      routingKey: 'integration.nack.key',
+    };
+    const seen: string[] = [];
+    let resolveSentinel!: () => void;
+    const sentinelArrived = new Promise<void>((resolve) => {
+      resolveSentinel = resolve;
+    });
+
+    const handle = await setupDelayedMessageListener({
+      amqpUrl,
+      config: nackConfig,
+      logger: silentLogger,
+      onMessage: (message) => {
+        const payload = JSON.parse(message.content.toString()) as { id: string };
+        seen.push(payload.id);
+        if (payload.id === 'poison') {
+          return Promise.reject(new Error('handler failure'));
+        }
+        resolveSentinel();
+        return Promise.resolve();
+      },
+    });
+    listenerHandles.push(handle);
+
+    const publisherConn = await amqp.connect(amqpUrl);
+    try {
+      const publisherCh = await publisherConn.createChannel();
+      await publisherCh.assertExchange(slothResponseExchangeName, 'headers', { durable: true });
+      const publish = (id: string): void => {
+        publisherCh.publish(
+          slothResponseExchangeName,
+          nackConfig.routingKey,
+          Buffer.from(JSON.stringify({ id })),
+          { headers: { service: nackConfig.serviceName }, persistent: true },
+        );
+      };
+      publish('poison');
+      publish('sentinel');
+
+      await sentinelArrived;
+      // With requeue=false and no DLX policy on the queue, the broker must
+      // drop the nacked message. Give an (incorrect) redelivery a moment to
+      // show up before pinning the exact delivery sequence.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(seen).toEqual(['poison', 'sentinel']);
     } finally {
       await publisherConn.close().catch(() => {});
     }

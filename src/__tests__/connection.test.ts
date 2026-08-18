@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockClose = vi.fn().mockResolvedValue(undefined);
-const mockClient = { close: mockClose };
+let clientErrorHandler: (() => void) | null = null;
+const mockClientOn = vi.fn((event: string, handler: unknown) => {
+  if (event === 'error') clientErrorHandler = handler as () => void;
+});
+const mockRemoveListener = vi.fn();
+const mockClient = { close: mockClose, on: mockClientOn, removeListener: mockRemoveListener };
 const mockConnect = vi.fn().mockResolvedValue(mockClient);
 
 vi.mock('amqplib', () => ({ default: { connect: mockConnect } }));
@@ -9,6 +14,7 @@ vi.mock('amqplib', () => ({ default: { connect: mockConnect } }));
 describe('slothConnect', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clientErrorHandler = null;
     mockConnect.mockResolvedValue(mockClient);
   });
 
@@ -60,6 +66,72 @@ describe('slothConnect', () => {
     const { slothConnect } = await import('../connection.js');
     mockConnect.mockRejectedValueOnce(new Error('refused'));
     await expect(slothConnect('amqp://bad')).rejects.toThrow('refused');
+  });
+
+  it('wraps a foreign connect failure as SlothConnectError with the cause chained', async () => {
+    const { slothConnect } = await import('../connection.js');
+    const { SlothConnectError } = await import('../errors.js');
+    const socketError = new Error('ECONNREFUSED');
+    mockConnect.mockRejectedValueOnce(socketError);
+    const rejection = await slothConnect('amqp://bad').then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(rejection).toBeInstanceOf(SlothConnectError);
+    if (!(rejection instanceof SlothConnectError)) throw new Error('unreachable');
+    expect(rejection.code).toBe('SLOTH_CONNECT');
+    expect(rejection.cause).toBe(socketError);
+  });
+
+  it('wraps a foreign setup failure as SlothConnectError and closes the connection', async () => {
+    const { slothConnect } = await import('../connection.js');
+    const { SlothConnectError } = await import('../errors.js');
+    const setupError = new Error('access refused to exchange');
+    const badSetup = vi.fn().mockRejectedValue(setupError);
+    const rejection = await slothConnect('amqp://localhost', badSetup).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(rejection).toBeInstanceOf(SlothConnectError);
+    if (!(rejection instanceof SlothConnectError)) throw new Error('unreachable');
+    expect(rejection.cause).toBe(setupError);
+    expect(mockClose).toHaveBeenCalled();
+  });
+
+  it('lets a SlothError thrown by a setup pass through unwrapped', async () => {
+    const { slothConnect } = await import('../connection.js');
+    const { SlothValidationError } = await import('../errors.js');
+    const original = new SlothValidationError('bad queue name');
+    const badSetup = vi.fn().mockRejectedValue(original);
+    await expect(slothConnect('amqp://localhost', badSetup)).rejects.toBe(original);
+  });
+
+  it('propagates a caller abort reason by identity (never wrapped)', async () => {
+    const { slothConnect } = await import('../connection.js');
+    const reason = { plain: 'shutdown-object' };
+    const ac = new AbortController();
+    mockConnect.mockReturnValueOnce(new Promise(() => {})); // hung
+    setTimeout(() => {
+      ac.abort(reason);
+    }, 5);
+    await expect(slothConnect('amqp://hung', { signal: ac.signal })).rejects.toBe(reason);
+  });
+
+  it('parks an error swallow-handler on the connection during the setup window', async () => {
+    const { slothConnect } = await import('../connection.js');
+    // A connection-level 'error' emitted while a setup runs must be absorbed
+    // (the failing setup promise is the real signal) — not crash the process.
+    const setup = vi.fn().mockImplementation(() => {
+      expect(clientErrorHandler).not.toBeNull();
+      expect(() => {
+        clientErrorHandler?.();
+      }).not.toThrow();
+      return Promise.resolve();
+    });
+    await slothConnect('amqp://localhost', setup);
+    expect(mockClientOn).toHaveBeenCalledWith('error', expect.any(Function));
+    // Ownership hands over to the caller once we return — handler removed.
+    expect(mockRemoveListener).toHaveBeenCalledWith('error', expect.any(Function));
   });
 
   it('throws immediately when caller-supplied signal is already aborted', async () => {
@@ -192,6 +264,48 @@ describe('slothConnect', () => {
     const { slothConnect } = await import('../connection.js');
     await slothConnect('amqp://localhost', { timeoutMs: 5_000 });
     expect(mockConnect).toHaveBeenCalledWith('amqp://localhost');
+  });
+
+  it('passes socketOptions through to amqplib connect (TLS material, recovery)', async () => {
+    const { slothConnect } = await import('../connection.js');
+    await slothConnect('amqp://localhost', {
+      socketOptions: { ca: ['pem'], servername: 'broker.internal' },
+    });
+    expect(mockConnect).toHaveBeenCalledWith('amqp://localhost', {
+      ca: ['pem'],
+      servername: 'broker.internal',
+    });
+  });
+
+  it('merges socketOptions.clientProperties underneath the dedicated options', async () => {
+    const { slothConnect } = await import('../connection.js');
+    await slothConnect('amqp://localhost', {
+      connectionName: 'wins',
+      clientProperties: { product: 'dedicated' },
+      socketOptions: {
+        heartbeat: 30,
+        clientProperties: { product: 'socket', platform: 'node' },
+      },
+    });
+    expect(mockConnect).toHaveBeenCalledWith('amqp://localhost', {
+      heartbeat: 30,
+      clientProperties: {
+        platform: 'node',
+        product: 'dedicated',
+        connection_name: 'wins',
+      },
+    });
+  });
+
+  it('ignores a non-object clientProperties inside socketOptions', async () => {
+    const { slothConnect } = await import('../connection.js');
+    await slothConnect('amqp://localhost', {
+      connectionName: 'svc',
+      socketOptions: { clientProperties: 'garbage' },
+    });
+    expect(mockConnect).toHaveBeenCalledWith('amqp://localhost', {
+      clientProperties: { connection_name: 'svc' },
+    });
   });
 
   it('swallows errors from the loser-cleanup close() call', async () => {

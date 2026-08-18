@@ -1,6 +1,6 @@
-# Two-tier hook setup:
-# - husky + lint-staged (in package.json) handle fast Node-side checks (eslint --fix, prettier).
-# - pre-commit (this file) handles language-agnostic file hygiene that ESLint doesn't see.
+# pre-commit is the only git-hook framework in this repo (no husky/lint-staged
+# layer). It handles language-agnostic file hygiene that ESLint doesn't see,
+# plus workflow-security linting via zizmor.
 #
 # Install: pipx install pre-commit && pre-commit install
 # Run all: pre-commit run --all-files
@@ -31,6 +31,11 @@ repos:
         exclude: ^(package-lock\.json|coverage/|dist/)
       - id: no-commit-to-branch
         args: [--branch, main]
+
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.29.0
+    hooks:
+      - id: zizmor
 
 # renovate-config-validator is invoked in CI directly via npx (see ci.yml lint job)
 # rather than as a pre-commit hook — its hook requires pre-commit >=3.6.

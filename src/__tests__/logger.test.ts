@@ -36,6 +36,17 @@ describe('NoOpLogger', () => {
 });
 
 describe('withLogLevel', () => {
+  it('throws a typed error for an invalid level string (JS caller guard)', async () => {
+    const { SlothValidationError } = await import('../errors.js');
+    const inner = makeMockLogger();
+    // An invalid level would otherwise silently drop ALL output — every rank
+    // comparison against undefined is false.
+    expect(() => withLogLevel(inner, 'verbose' as never)).toThrow(SlothValidationError);
+    expect(() => withLogLevel(inner, 'verbose' as never)).toThrow(
+      'logLevel must be one of debug|info|warn|error|silent',
+    );
+  });
+
   it('forwards all levels at debug minimum', () => {
     const inner = makeMockLogger();
     const wrapped = withLogLevel(inner, 'debug');
