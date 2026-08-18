@@ -1,7 +1,12 @@
 name: CI
 
+# Runs on PRs and again on every push to main: dependency PRs are merged
+# automatically once their checks pass, so the post-merge run is the safety net
+# (and keeps the README CI badge live).
 on:
   pull_request:
+    branches: [main]
+  push:
     branches: [main]
 
 concurrency:
@@ -19,12 +24,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run lint
       - run: npm run format:check
       - run: npm run lint:lockfile
@@ -36,12 +43,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run type-check
       - run: npm run type-check:examples
 
@@ -49,13 +58,20 @@ jobs:
     name: Dual-publish build (tsup)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    strategy:
+      matrix:
+        # Supported floor (22) + development version (24). Bare majors resolve
+        # to the latest patch, so Renovate doesn't need to track them.
+        node: ['22', '24']
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
         with:
-          node-version-file: '.nvmrc'
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - name: Verify dual ESM + CJS output
         run: |
@@ -68,24 +84,34 @@ jobs:
 
   coverage:
     name: Vitest Coverage
-    if: >
-      github.event.pull_request.user.login != 'renovate[bot]' &&
-      github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    strategy:
+      matrix:
+        # Supported floor (22) + development version (24). Bare majors resolve
+        # to the latest patch, so Renovate doesn't need to track them.
+        node: ['22', '24']
     permissions:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
         with:
-          node-version-file: '.nvmrc'
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run coverage
+      # Comment only from the Node 24 leg (avoids duplicates), only on PRs, and
+      # not on bot PRs — the tests themselves run for everyone.
       - name: Report Coverage
-        if: always()
+        if: >
+          always() && matrix.node == '24' &&
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.user.login != 'renovate[bot]' &&
+          github.event.pull_request.user.login != 'dependabot[bot]'
         uses: davelosert/vitest-coverage-report-action@v2
 
   packaging:
@@ -94,12 +120,14 @@ jobs:
     timeout-minutes: 10
     needs: build
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - name: Validate published shape (publint + attw)
         run: npm run lint:packaging
@@ -111,44 +139,97 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --ignore-scripts
+      # Consumer-facing tree: anything high or worse blocks.
       - run: npm audit --omit=dev --audit-level=high
+      # Full tree incl. devDependencies: threshold is critical because known
+      # moderate/low dev-only advisories exist and must not block CI.
+      - run: npm audit --audit-level=critical
+
+  dependency-review:
+    name: Dependency review
+    # Requires the dependency graph, which only exists on public repos — skipped
+    # while the repo is private and on push events; ci-gate accepts the skip.
+    if: github.event_name == 'pull_request' && !github.event.repository.private
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high
 
   pre-commit:
     name: pre-commit hooks
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.14.6'
-      - uses: pre-commit/action@v3.0.1
+      - run: pipx install pre-commit
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - run: pre-commit run --all-files --show-diff-on-failure
+        env:
+          # no-commit-to-branch is a local guard; on push events the runner is
+          # literally on main, so the hook would always fail here.
+          SKIP: no-commit-to-branch
 
   ci-gate:
-    needs: [lint, type-check, build, packaging, coverage, security, pre-commit]
+    needs: [lint, type-check, build, packaging, coverage, security, dependency-review, pre-commit]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Check all jobs passed
+        env:
+          RESULT_LINT: ${{ needs.lint.result }}
+          RESULT_TYPE_CHECK: ${{ needs.type-check.result }}
+          RESULT_BUILD: ${{ needs.build.result }}
+          RESULT_PACKAGING: ${{ needs.packaging.result }}
+          RESULT_COVERAGE: ${{ needs.coverage.result }}
+          RESULT_SECURITY: ${{ needs.security.result }}
+          RESULT_DEPENDENCY_REVIEW: ${{ needs.dependency-review.result }}
+          RESULT_PRE_COMMIT: ${{ needs.pre-commit.result }}
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            echo "One or more jobs failed"
-            exit 1
+          fail=0
+          require_success() {
+            if [[ "$2" != "success" ]]; then
+              echo "$1: $2 (expected success)"
+              fail=1
+            fi
+          }
+          require_success "lint" "$RESULT_LINT"
+          require_success "type-check" "$RESULT_TYPE_CHECK"
+          require_success "build" "$RESULT_BUILD"
+          require_success "packaging" "$RESULT_PACKAGING"
+          require_success "coverage" "$RESULT_COVERAGE"
+          require_success "security" "$RESULT_SECURITY"
+          require_success "pre-commit" "$RESULT_PRE_COMMIT"
+          # dependency-review is legitimately skipped while the repo is private
+          # and on push events; everything else must have run and passed.
+          if [[ "$RESULT_DEPENDENCY_REVIEW" != "success" && "$RESULT_DEPENDENCY_REVIEW" != "skipped" ]]; then
+            echo "dependency-review: $RESULT_DEPENDENCY_REVIEW (expected success or skipped)"
+            fail=1
           fi
-          if [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
-            echo "One or more jobs were cancelled"
-            exit 1
-          fi
-          IS_BOT="${{ github.event.pull_request.user.login == 'renovate[bot]' || github.event.pull_request.user.login == 'dependabot[bot]' }}"
-          if [[ "$IS_BOT" != "true" && "${{ contains(needs.*.result, 'skipped') }}" == "true" ]]; then
-            echo "One or more jobs were skipped"
+          if [[ "$fail" == "1" ]]; then
             exit 1
           fi
           echo "All jobs passed"

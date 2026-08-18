@@ -7,7 +7,7 @@
   "platformAutomerge": false,
   "rebaseWhen": "behind-base-branch",
   "prNotPendingHours": 0,
-  "minimumReleaseAge": null,
+  "minimumReleaseAge": "3 days",
   "schedule": ["at any time"],
   "separateMinorPatch": false,
   "separateMajorMinor": true,
@@ -17,25 +17,18 @@
   "vulnerabilityAlerts": {
     "enabled": true,
     "labels": ["security"],
-    "schedule": ["at any time"]
+    "schedule": ["at any time"],
+    "minimumReleaseAge": null
   },
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": ["at any time"]
+    "schedule": ["before 5am on monday"]
   },
   "customManagers": [
     {
       "customType": "regex",
       "managerFilePatterns": ["/^\\.nvmrc$/"],
       "matchStrings": ["(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
-      "depNameTemplate": "node",
-      "datasourceTemplate": "node-version",
-      "versioningTemplate": "node"
-    },
-    {
-      "customType": "regex",
-      "managerFilePatterns": ["/^\\.github/workflows/ci\\.yml$/"],
-      "matchStrings": ["node-version:\\s*'(?<currentValue>\\d+\\.\\d+\\.\\d+)'"],
       "depNameTemplate": "node",
       "datasourceTemplate": "node-version",
       "versioningTemplate": "node"
@@ -52,7 +45,7 @@
   ],
   "packageRules": [
     {
-      "description": "Node runtime: .nvmrc + CI + @types/node in one PR (engines is a floor, not tracked)",
+      "description": "Node runtime: .nvmrc + @types/node in one PR (CI matrix uses bare majors, nothing to track)",
       "groupName": "Node runtime (all files)",
       "matchManagers": ["custom.regex", "npm"],
       "matchDatasources": ["node-version", "npm"],
@@ -121,6 +114,11 @@
         "/^eslint-plugin-/",
         "/^eslint-config-/"
       ]
+    },
+    {
+      "description": "engines is a compatibility floor, not a tracked dep",
+      "matchDepTypes": ["engines"],
+      "enabled": false
     }
   ]
 }

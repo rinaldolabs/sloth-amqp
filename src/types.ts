@@ -7,7 +7,11 @@ export type DelaySpec =
   | { delaySeconds: number; delayMinutes?: never; delayUntil?: never }
   | { delayUntil: Date; delayMinutes?: never; delaySeconds?: never };
 
-/** A message this library is about to publish. */
+/**
+ * A message this library has published. Emitted after the broker confirms the
+ * publish — failed or timed-out publishes never reach the wire tap; observe
+ * those via the `sloth.publish.failed` log event instead.
+ */
 export interface SlothWireOutbound {
   readonly direction: 'out';
   readonly exchange: string;
@@ -91,11 +95,35 @@ type SendDelayMessageBase<TData = unknown> = {
 
 export type SendDelayMessageParams<TData = unknown> = SendDelayMessageBase<TData> & DelaySpec;
 
+/**
+ * Why a listener died without `close()` being called. Passed to
+ * {@link SlothListenerOptions.onClosed}.
+ *
+ * - `'connection-closed'` — the AMQP connection dropped (broker restart,
+ *   heartbeat timeout, network partition).
+ * - `'channel-closed'` — the broker closed the channel while the connection
+ *   stayed up (protocol error, queue deleted).
+ * - `'consumer-cancelled'` — the broker cancelled this consumer server-side
+ *   (queue deleted, node failover with a non-HA queue).
+ */
+export type SlothListenerClosedReason =
+  'connection-closed' | 'channel-closed' | 'consumer-cancelled';
+
 export interface SlothListenerOptions {
   amqpUrl: string;
   config: SlothConfig;
   logger?: SlothLogger;
   onMessage: (message: ConsumeMessage) => Promise<void>;
+  /**
+   * Opt-in death notification. Fired at most once, only after setup succeeded,
+   * and never as a result of the caller's own `close()`. The listener does
+   * **not** reconnect by itself — when this fires, the consumer is dead and no
+   * further messages will be delivered. Re-run `setupDelayedMessageListener`
+   * (ideally with backoff), or exit and let your orchestrator restart the
+   * process. A throwing callback is caught and logged
+   * (`sloth.listener.on_closed_failed`), never rethrown.
+   */
+  onClosed?: (reason: SlothListenerClosedReason) => void;
   queueExpiresMs?: number;
   /**
    * Consumer prefetch (QoS) — the maximum number of unacknowledged messages

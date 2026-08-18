@@ -1,6 +1,6 @@
 import amqp, { type ChannelModel } from 'amqplib';
 import { combineAbort, raceWithAbort, safeClose } from './abort.js';
-import { SlothValidationError } from './errors.js';
+import { SlothConnectError, SlothValidationError, toSlothError } from './errors.js';
 import type { SlothSetup } from './types.js';
 
 /**
@@ -37,6 +37,14 @@ export interface SlothConnectOptions {
    * broker's management UI.
    */
   clientProperties?: Record<string, unknown>;
+  /**
+   * Passed through as amqplib's `socketOptions` (second `connect` argument).
+   * This is the hook for TLS material on `amqps://` URLs (`ca`, `cert`, `key`,
+   * `passphrase`), `servername`, and amqplib's opt-in connection `recovery`
+   * options. A `clientProperties` key in here is merged with (and loses to)
+   * the dedicated `clientProperties` / `connectionName` options above.
+   */
+  socketOptions?: Record<string, unknown>;
 }
 
 const isOptions = (v: unknown): v is SlothConnectOptions =>
@@ -79,43 +87,70 @@ export async function slothConnect(
   if (signal?.aborted) throw signal.reason as unknown;
 
   // Merge connection_name into clientProperties so the connection is
-  // identifiable in RabbitMQ's management UI. Only build socketOptions when the
-  // caller asked for something — otherwise pass nothing and keep the bare
-  // connect path unchanged.
-  const clientProperties: Record<string, unknown> = { ...options.clientProperties };
+  // identifiable in RabbitMQ's management UI. Caller-supplied socketOptions
+  // (TLS material, recovery, …) pass through underneath; the dedicated
+  // clientProperties/connectionName options win over a clientProperties key
+  // inside socketOptions. Only build the options object when the caller asked
+  // for something — otherwise keep the bare connect path unchanged.
+  const baseSocketOptions: Record<string, unknown> = { ...options.socketOptions };
+  const baseClientProperties = baseSocketOptions['clientProperties'];
+  const clientProperties: Record<string, unknown> = {
+    ...(isOptions(baseClientProperties) ? baseClientProperties : {}),
+    ...options.clientProperties,
+  };
   if (options.connectionName !== undefined) {
     clientProperties['connection_name'] = options.connectionName;
   }
-  const socketOptions = Object.keys(clientProperties).length > 0 ? { clientProperties } : undefined;
-
-  // amqplib has no native AbortSignal support, so we race. If the signal
-  // wins, the connect promise may still resolve later with an open socket;
-  // `safeClose` ensures it gets closed instead of leaking.
-  const client = await raceWithAbort(
-    socketOptions ? amqp.connect(url, socketOptions) : amqp.connect(url),
-    signal,
-    safeClose,
-  );
-
-  // Run setups sequentially in argument order. They share one ChannelModel,
-  // so a later setup may depend on a resource an earlier one declared (e.g.
-  // bind a queue an earlier setup asserted); amqplib serialises RPCs per
-  // channel but gives no cross-setup ordering guarantee, so Promise.all could
-  // race a bindQueue ahead of its assertQueue. Sequential awaits are cheap
-  // (a handful of calls at connect time) and match amqp-connection-manager /
-  // rascal. If the signal aborts mid-setup, close the connection we just
-  // opened so it doesn't leak, then propagate the abort reason.
-  const runSetups = async (): Promise<void> => {
-    for (const fn of setups) await fn(client);
-  };
-  try {
-    await raceWithAbort(runSetups(), signal);
-  } catch (error) {
-    await safeClose(client);
-    throw error;
+  if (Object.keys(clientProperties).length > 0) {
+    baseSocketOptions['clientProperties'] = clientProperties;
   }
+  const socketOptions = Object.keys(baseSocketOptions).length > 0 ? baseSocketOptions : undefined;
 
-  return client;
+  try {
+    // amqplib has no native AbortSignal support, so we race. If the signal
+    // wins, the connect promise may still resolve later with an open socket;
+    // `safeClose` ensures it gets closed instead of leaking.
+    const client = await raceWithAbort(
+      socketOptions ? amqp.connect(url, socketOptions) : amqp.connect(url),
+      signal,
+      safeClose,
+    );
+
+    // Until this function returns, nobody owns the connection's 'error' event —
+    // and an unhandled 'error' on the EventEmitter would crash the process if a
+    // setup triggers a connection-level failure. Park a swallow-handler for the
+    // setup window only; the failure itself still surfaces through the rejected
+    // setup promise. The caller owns 'error' handling after we return (see the
+    // README setup-composition example).
+    const swallowSetupWindowError = (): void => {};
+    client.on('error', swallowSetupWindowError);
+
+    // Run setups sequentially in argument order. They share one ChannelModel,
+    // so a later setup may depend on a resource an earlier one declared (e.g.
+    // bind a queue an earlier setup asserted); amqplib serialises RPCs per
+    // channel but gives no cross-setup ordering guarantee, so Promise.all could
+    // race a bindQueue ahead of its assertQueue. Sequential awaits are cheap
+    // (a handful of calls at connect time) and match amqp-connection-manager /
+    // rascal. If the signal aborts mid-setup, close the connection we just
+    // opened so it doesn't leak, then propagate the abort reason.
+    const runSetups = async (): Promise<void> => {
+      for (const fn of setups) await fn(client);
+    };
+    try {
+      await raceWithAbort(runSetups(), signal);
+    } catch (error) {
+      await safeClose(client);
+      throw error;
+    } finally {
+      client.removeListener('error', swallowSetupWindowError);
+    }
+
+    return client;
+  } catch (error) {
+    // Typed-error contract: connect-phase failures surface as SlothConnectError
+    // with the amqplib cause chained; abort reasons propagate verbatim.
+    throw toSlothError(error, signal, SlothConnectError);
+  }
 }
 
 export const slothClose = (client: ChannelModel): Promise<void> => client.close();

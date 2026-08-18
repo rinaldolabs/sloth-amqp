@@ -1,0 +1,10 @@
+# zizmor configuration (runs via the pre-commit hook, see .pre-commit-config.yaml).
+#
+# Repo dependency policy allows GitHub Actions pinned by semver tag — no
+# hash-pinning required (see CLAUDE.md "Dependency policy"). ref-pin still
+# rejects unpinned/branch-floating `uses:` references.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        '*': ref-pin

@@ -151,6 +151,17 @@ describe('resolveDelaySeconds', () => {
     );
   });
 
+  it('throws a typed error if a JS caller passes a non-Date delayUntil', async () => {
+    const { resolveDelaySeconds } = await import('../sender.js');
+    const { SlothValidationError } = await import('../errors.js');
+    expect(() => resolveDelaySeconds({ delayUntil: 'tomorrow' as never })).toThrow(
+      SlothValidationError,
+    );
+    expect(() => resolveDelaySeconds({ delayUntil: { y: 2030 } as never })).toThrow(
+      'delayUntil must be a Date',
+    );
+  });
+
   it('returns pastDateWarning when delayUntil is in the past', async () => {
     const { resolveDelaySeconds } = await import('../sender.js');
     const { pastDateWarning } = resolveDelaySeconds({
@@ -214,6 +225,27 @@ describe('sanitizeLabel', () => {
     const result = sanitizeLabel(emoji.repeat(300));
     // Should be exactly 200 emoji — not cut in half
     expect([...result.matchAll(/😀/gu)]).toHaveLength(200);
+  });
+
+  it('strips C1 controls (e.g. CSI U+009B) that terminals interpret as escape introducers', async () => {
+    const { sanitizeLabel } = await import('../sender.js');
+    expect(sanitizeLabel('ok31mlabel')).toBe('ok31mlabel');
+  });
+
+  it('strips bidi override and isolate characters', async () => {
+    const { sanitizeLabel } = await import('../sender.js');
+    // Escapes (not literals) so the file itself trips no trojan-source linting:
+    // RLO override, LRI isolate, PDI pop.
+    expect(sanitizeLabel('ok\u202Elabel\u2066x\u2069')).toBe('oklabelx');
+  });
+
+  it('hard-caps code-unit length even when single graphemes are huge (ZWJ chains)', async () => {
+    const { sanitizeLabel } = await import('../sender.js');
+    // Family emoji: 1 grapheme cluster, 11 UTF-16 code units. 200 clusters
+    // would be 2200 units without the cap.
+    const family = '👨‍👩‍👧‍👦';
+    const result = sanitizeLabel(family.repeat(300));
+    expect(result.length).toBe(400);
   });
 
   it('passes through safe labels unchanged', async () => {
@@ -335,6 +367,32 @@ describe('createDelaySender', () => {
     );
   });
 
+  it('publishes with the exact wire-contract options: persistent, JSON content type, no extras', async () => {
+    // Exact-shape assertion (not objectContaining): the durability posture is
+    // part of the wire contract — goamqp publishes DeliveryMode 2, and a
+    // transient message would be silently lost on broker restart. An exact
+    // match also pins that no unexpected option can sneak in.
+    const { createDelaySender } = await import('../sender.js');
+    await createDelaySender(mockClient as never).send({
+      data: { key: 'test-event' },
+      delayMinutes: 30,
+      logger: mockLogger,
+      config: testConfig,
+      messageId: 'm-exact',
+    });
+
+    const opts = mockPublish.mock.calls[0]?.[3] as Record<string, unknown>;
+    expect(opts).toEqual({
+      persistent: true,
+      contentType: 'application/json',
+      messageId: 'm-exact',
+      headers: {
+        'delay-until': FIXED_NOW_SEC + 30 * 60,
+        target: 'amqp://test-service/test.key',
+      },
+    });
+  });
+
   it('publishes correct delay-until when using delaySeconds', async () => {
     const { createDelaySender } = await import('../sender.js');
     await createDelaySender(mockClient as never).send({
@@ -397,6 +455,37 @@ describe('createDelaySender', () => {
         config: testConfig,
       }),
     ).rejects.toThrow('exchange error');
+  });
+
+  it('wraps a foreign assertExchange failure as SlothPublishError with the cause chained', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const { SlothPublishError } = await import('../errors.js');
+    const broker = new Error('PRECONDITION_FAILED');
+    mockAssertExchange.mockRejectedValueOnce(broker);
+    const rejection = await createDelaySender(mockClient as never)
+      .send({ data: { n: 1 }, delayMinutes: 1, logger: mockLogger, config: testConfig })
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    expect(rejection).toBeInstanceOf(SlothPublishError);
+    if (!(rejection instanceof SlothPublishError)) throw new Error('unreachable');
+    expect(rejection.code).toBe('SLOTH_PUBLISH');
+    expect(rejection.cause).toBe(broker);
+  });
+
+  it('wraps a foreign createConfirmChannel failure as SlothPublishError', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const { SlothPublishError } = await import('../errors.js');
+    mockCreateConfirmChannel.mockRejectedValueOnce(new Error('no channels left'));
+    await expect(
+      createDelaySender(mockClient as never).send({
+        data: { n: 1 },
+        delayMinutes: 1,
+        logger: mockLogger,
+        config: testConfig,
+      }),
+    ).rejects.toBeInstanceOf(SlothPublishError);
   });
 
   it('rejects with a SlothPublishError when broker nacks the publish (callback err)', async () => {
@@ -570,7 +659,7 @@ describe('createDelaySender', () => {
     }).not.toThrow();
   });
 
-  it('throws immediately when the caller signal is already aborted', async () => {
+  it('throws immediately when the caller signal is already aborted, with zero AMQP work', async () => {
     const { createDelaySender } = await import('../sender.js');
     const ac = new AbortController();
     ac.abort(new Error('pre-aborted'));
@@ -583,6 +672,87 @@ describe('createDelaySender', () => {
         signal: ac.signal,
       }),
     ).rejects.toThrow('pre-aborted');
+    expect(mockCreateConfirmChannel).not.toHaveBeenCalled();
+    expect(mockPublish).not.toHaveBeenCalled();
+  });
+
+  it('rejects without publishing when the caller aborts during a pending channel acquire', async () => {
+    // The acquire phase is raced against the signal too — a hung
+    // createConfirmChannel (black-hole partition) must not let send() sail
+    // past its deadline, and a cancelled send must never publish.
+    const { createDelaySender } = await import('../sender.js');
+    const reason = new Error('caller gave up');
+    const ac = new AbortController();
+    mockCreateConfirmChannel.mockReturnValueOnce(new Promise(() => {})); // hung
+    const { send } = createDelaySender(mockClient as never);
+    const promise = send({
+      data: { n: 1 },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+      signal: ac.signal,
+    });
+    promise.catch(() => undefined);
+    ac.abort(reason);
+    await expect(promise).rejects.toBe(reason);
+    expect(mockPublish).not.toHaveBeenCalled();
+  });
+
+  it('does not publish when the abort fires in the same tick the cached channel resolves', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const { send } = createDelaySender(mockClient as never);
+    // First send caches the channel.
+    await send({ data: { n: 1 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+
+    // Second send: the acquire resolves from cache (already-settled promise
+    // wins the race), but the abort fired before publish — the re-check must
+    // reject with the caller's reason and skip the publish.
+    const reason = new Error('too late');
+    const ac = new AbortController();
+    const promise = send({
+      data: { n: 2 },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+      signal: ac.signal,
+    });
+    promise.catch(() => undefined);
+    ac.abort(reason);
+    await expect(promise).rejects.toBe(reason);
+    expect(mockPublish).toHaveBeenCalledTimes(1); // only the first send published
+  });
+
+  it('propagates a caller abort during the confirm wait verbatim and keeps the channel', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const { SlothTimeoutError } = await import('../errors.js');
+    // Confirm callback withheld — the publish hangs at the confirm wait.
+    mockPublish.mockImplementationOnce(() => true);
+    const reason = new Error('shutdown requested');
+    const ac = new AbortController();
+    const { send } = createDelaySender(mockClient as never);
+    const promise = send({
+      data: { n: 1 },
+      delayMinutes: 1,
+      logger: mockLogger,
+      config: testConfig,
+      signal: ac.signal,
+    });
+    promise.catch(() => undefined);
+    // Poll until the publish has actually been issued — only then is send()
+    // parked on the confirm wait that the abort must interrupt.
+    while (mockPublish.mock.calls.length === 0) await Promise.resolve();
+    ac.abort(reason);
+    // Caller abort → reason verbatim, never normalised to SlothTimeoutError.
+    const rejection = await promise.then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(rejection).toBe(reason);
+    expect(rejection).not.toBeInstanceOf(SlothTimeoutError);
+
+    // The channel stays cached — the message may still confirm.
+    await send({ data: { n: 2 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    expect(mockCreateConfirmChannel).toHaveBeenCalledTimes(1);
   });
 
   it('suppresses debug and info logs when logLevel is error', async () => {
@@ -757,6 +927,65 @@ describe('createDelaySender', () => {
     mockCreateConfirmChannel.mockImplementationOnce(() => Promise.resolve(mockChannel));
     await send({ data: { n: 2 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
     expect(mockCreateConfirmChannel).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let a failed open clobber a newer in-flight acquire', async () => {
+    // Sequence: open #1's channel dies mid-assertExchange (invalidate clears
+    // the in-flight slot) → a new send starts open #2 → open #1 finally fails.
+    // Its cleanup must NOT null out open #2's in-flight state — a third send
+    // must join open #2 instead of starting a third channel.
+    const chan1 = buildChannel();
+    const chan2 = buildChannel();
+    let resolveAssert1: () => void = () => {};
+    let resolveAssert2: () => void = () => {};
+    const flags = { assert1Called: false, assert2Called: false };
+    mockCreateConfirmChannel
+      .mockImplementationOnce(() => Promise.resolve(chan1))
+      .mockImplementationOnce(() => Promise.resolve(chan2));
+    mockAssertExchange
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            flags.assert1Called = true;
+            resolveAssert1 = () => {
+              resolve();
+            };
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            flags.assert2Called = true;
+            resolveAssert2 = () => {
+              resolve();
+            };
+          }),
+      );
+
+    const { createDelaySender } = await import('../sender.js');
+    const { send } = createDelaySender(mockClient as never);
+
+    const p1 = send({ data: { n: 1 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    while (!flags.assert1Called) await Promise.resolve();
+
+    // Channel #1 dies mid-open — invalidate frees the in-flight slot.
+    chan1.emit('close');
+
+    // A new send starts open #2 while open #1 is still unwinding.
+    const p2 = send({ data: { n: 2 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    while (!flags.assert2Called) await Promise.resolve();
+
+    // Open #1 now fails; its finally must leave open #2's state alone.
+    resolveAssert1();
+    await expect(p1).rejects.toThrow('closed before publisher was ready');
+
+    // A third send must join the pending open #2, not create a third channel.
+    const p3 = send({ data: { n: 3 }, delayMinutes: 1, logger: mockLogger, config: testConfig });
+    resolveAssert2();
+    await Promise.all([p2, p3]);
+
+    expect(mockCreateConfirmChannel).toHaveBeenCalledTimes(2);
+    expect(mockPublish).toHaveBeenCalledTimes(2);
   });
 
   it('ignores a stale close event on a channel that was already replaced', async () => {

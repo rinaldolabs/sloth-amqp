@@ -68,7 +68,6 @@ license; refer to the upstream package for terms.
   - release-please — https://github.com/googleapis/release-please
   - commitlint — https://commitlint.js.org/
   - Renovate — https://docs.renovatebot.com/
-  - Husky — https://typicode.github.io/husky/
   - lockfile-lint — https://github.com/lirantal/lockfile-lint
   - CycloneDX npm — https://github.com/CycloneDX/cyclonedx-node-npm
   - Testcontainers for Node.js — https://node.testcontainers.org/

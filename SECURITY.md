@@ -14,24 +14,25 @@ You will receive an acknowledgement within 7 days. Fixes are released as patch v
 
 Remediation targets by severity (CVSS): Critical within 24 hours, High within 7 days, Medium within 30 days, Low by the next release.
 
-## Known dev-only advisories
+## Dependency-audit policy
 
-`npm audit` (run without `--omit=dev`) reports advisories that live entirely in
-the build/test toolchain. They do **not** affect consumers: the published
-tarball ships only `dist/` (see `files` in `package.json`) and has **zero
-runtime dependencies** (`amqplib` is a peer dependency provided by the
-consumer). A consumer's `npm install` never installs this package's
-`devDependencies` or its lockfile, so none of the chains below reach an
-installed application.
+The published tarball ships only `dist/` (see `files` in `package.json`) and
+has **zero runtime dependencies** (`amqplib` is a peer dependency provided by
+the consumer), so a consumer's `npm install` never installs this package's
+`devDependencies` or its lockfile.
 
-The consumer-facing gate is `npm audit --omit=dev --audit-level=high`, which is
-enforced in CI and is clean (0 vulnerabilities).
+Two audit gates run in CI on every PR and release:
 
-| Advisory                                                                                                                   | Severity | Chain                                                                | Status                                                                                                                                                                                                                                                                                                                                      |
-| -------------------------------------------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [GHSA-h67p-54hq-rp68](https://github.com/advisories/GHSA-h67p-54hq-rp68) (js-yaml quadratic-complexity DoS)                | moderate | `lockfile-lint → lockfile-lint-api → @yarnpkg/parsers → js-yaml@3.x` | Accepted. The fix is js-yaml 4.2.0, but `@yarnpkg/parsers@3.x` pins `js-yaml@^3` and calls `safeLoad`, which was removed in js-yaml 4 — an `overrides` bump would break the linter at runtime. Dev/CI-only; the YAML parsed is our own `package-lock.json`, not untrusted input. Will clear when `@yarnpkg/parsers` adopts js-yaml ≥ 4.2.0. |
-| [GHSA-g7r4-m6w7-qqqr](https://github.com/advisories/GHSA-g7r4-m6w7-qqqr) (esbuild dev-server arbitrary file read, Windows) | low      | `tsup → esbuild@0.27.x`                                              | Accepted. The vulnerability is exclusively esbuild's dev server (`esbuild serve`), which this package never invokes — esbuild is used only for one-shot bundling via tsup. Fixed in esbuild 0.28.1; will clear when tsup floats its esbuild dependency past the advisory range.                                                             |
+- `npm audit --omit=dev --audit-level=high` — the consumer-facing gate over
+  the (empty) production tree plus the amqplib peer edge. Blocking.
+- `npm audit --audit-level=critical` — the full tree, including the dev
+  toolchain that executes in CI. Blocking at critical; high/moderate dev-tree
+  advisories are fixed via Renovate vulnerability alerts (immediate, no
+  cooldown) rather than failing the gate.
 
-We re-evaluate these on every Renovate lockfile-maintenance run. `lockfile-lint`
-is retained (not removed) because it provides registry-host and integrity-hash
-validation of `package-lock.json` that `npm ci` alone does not.
+Both are clean (0 vulnerabilities) as of 2026-08-11. If a dev-only advisory
+ever has to be accepted (no fix available in-range), it gets documented here
+with the chain and the clear-condition, and is re-evaluated on every Renovate
+lockfile-maintenance run. `lockfile-lint` is retained because it provides
+registry-host and integrity-hash validation of `package-lock.json` that
+`npm ci` alone does not.

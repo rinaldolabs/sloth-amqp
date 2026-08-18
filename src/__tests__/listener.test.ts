@@ -12,6 +12,8 @@ const mockChannelNack = vi.fn();
 const mockConnectionClose = vi.fn().mockResolvedValue(undefined);
 let channelErrorHandler: ((err: Error) => void) | null = null;
 let channelCloseHandler: (() => void) | null = null;
+let connectionErrorHandler: ((err: Error) => void) | null = null;
+let connectionCloseHandler: (() => void) | null = null;
 
 const mockChannel = {
   on: vi.fn((event: string, handler: unknown) => {
@@ -29,7 +31,14 @@ const mockChannel = {
   close: mockChannelClose,
 };
 const mockCreateChannel = vi.fn().mockResolvedValue(mockChannel);
-const mockConnection = { createChannel: mockCreateChannel, close: mockConnectionClose };
+const mockConnection = {
+  createChannel: mockCreateChannel,
+  close: mockConnectionClose,
+  on: vi.fn((event: string, handler: unknown) => {
+    if (event === 'error') connectionErrorHandler = handler as (err: Error) => void;
+    if (event === 'close') connectionCloseHandler = handler as () => void;
+  }),
+};
 const mockConnect = vi.fn().mockResolvedValue(mockConnection);
 
 vi.mock('amqplib', () => ({ default: { connect: mockConnect } }));
@@ -52,6 +61,8 @@ describe('setupDelayedMessageListener', () => {
     vi.clearAllMocks();
     channelErrorHandler = null;
     channelCloseHandler = null;
+    connectionErrorHandler = null;
+    connectionCloseHandler = null;
     mockConnect.mockResolvedValue(mockConnection);
     mockCreateChannel.mockResolvedValue(mockChannel);
     mockChannelClose.mockResolvedValue(undefined);
@@ -574,6 +585,273 @@ describe('setupDelayedMessageListener', () => {
     );
   });
 
+  it('wraps a foreign setup failure as SlothConnectError with code and cause', async () => {
+    const setupFn = await setup();
+    const { SlothConnectError } = await import('../errors.js');
+    const broker = new Error('ACCESS_REFUSED');
+    mockChannel.bindQueue.mockRejectedValueOnce(broker);
+
+    const rejection = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(rejection).toBeInstanceOf(SlothConnectError);
+    if (!(rejection instanceof SlothConnectError)) throw new Error('unreachable');
+    expect(rejection.code).toBe('SLOTH_CONNECT');
+    expect(rejection.cause).toBe(broker);
+  });
+
+  it('lets a SlothValidationError from setup pass through unwrapped', async () => {
+    const setupFn = await setup();
+    const { SlothValidationError } = await import('../errors.js');
+    await expect(
+      setupFn({
+        amqpUrl: 'amqp://localhost',
+        config: { serviceName: 'bad name', routingKey: 'k' },
+        onMessage: vi.fn(),
+        logger: mockLogger,
+      }),
+    ).rejects.toBeInstanceOf(SlothValidationError);
+  });
+
+  it('propagates a caller abort reason by identity (never wrapped)', async () => {
+    const setupFn = await setup();
+    const reason = { plain: 'shutdown-object' };
+    const ac = new AbortController();
+    mockConnect.mockReturnValueOnce(new Promise(() => {})); // hung
+    setTimeout(() => {
+      ac.abort(reason);
+    }, 5);
+    await expect(
+      setupFn({
+        amqpUrl: 'amqp://localhost',
+        config: testConfig,
+        onMessage: vi.fn(),
+        logger: mockLogger,
+        signal: ac.signal,
+      }),
+    ).rejects.toBe(reason);
+  });
+
+  it('logs connection error events without crashing', async () => {
+    const setupFn = await setup();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+    });
+
+    expect(connectionErrorHandler).not.toBeNull();
+    expect(() => {
+      connectionErrorHandler!(new Error('heartbeat timeout'));
+    }).not.toThrow();
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('heartbeat timeout'),
+      expect.objectContaining({ event: 'sloth.listener.connection_error' }),
+    );
+    await handle.close();
+  });
+
+  it('logs warn and fires onClosed(connection-closed) when the connection drops', async () => {
+    const setupFn = await setup();
+    const onClosed = vi.fn();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+      onClosed,
+    });
+
+    connectionCloseHandler!();
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'sloth: listener connection closed',
+      expect.objectContaining({ event: 'sloth.listener.connection_closed' }),
+    );
+    expect(onClosed).toHaveBeenCalledExactlyOnceWith('connection-closed');
+    await handle.close();
+  });
+
+  it('fires onClosed(channel-closed) when the broker closes the channel', async () => {
+    const setupFn = await setup();
+    const onClosed = vi.fn();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+      onClosed,
+    });
+
+    channelCloseHandler!();
+    expect(onClosed).toHaveBeenCalledExactlyOnceWith('channel-closed');
+    await handle.close();
+  });
+
+  it('logs warn and fires onClosed(consumer-cancelled) on a broker-side consumer cancel', async () => {
+    const setupFn = await setup();
+    const onClosed = vi.fn();
+    const onMessage = vi.fn();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage,
+      logger: mockLogger,
+      onClosed,
+    });
+
+    const consumeCallback = mockChannel.consume.mock.calls[0]?.[1] as (msg: unknown) => void;
+    consumeCallback(null);
+
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('consumer cancelled'),
+      expect.objectContaining({ event: 'sloth.listener.consumer_cancelled' }),
+    );
+    expect(onClosed).toHaveBeenCalledExactlyOnceWith('consumer-cancelled');
+    await handle.close();
+  });
+
+  it('fires onClosed at most once when connection and channel close cascade', async () => {
+    const setupFn = await setup();
+    const onClosed = vi.fn();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+      onClosed,
+    });
+
+    channelCloseHandler!();
+    connectionCloseHandler!();
+    connectionCloseHandler!();
+    expect(onClosed).toHaveBeenCalledExactlyOnceWith('channel-closed');
+    await handle.close();
+  });
+
+  it('does not fire onClosed for teardown events provoked by the caller closing the handle', async () => {
+    const setupFn = await setup();
+    const onClosed = vi.fn();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+      onClosed,
+    });
+
+    await handle.close();
+    // Real amqplib fires close events during teardown — simulate them.
+    channelCloseHandler!();
+    connectionCloseHandler!();
+    expect(onClosed).not.toHaveBeenCalled();
+  });
+
+  it('does not fire onClosed for events during the setup window (pre-armed)', async () => {
+    const setupFn = await setup();
+    const onClosed = vi.fn();
+    let resolveConsume!: (v: { consumerTag: string }) => void;
+    mockChannel.consume.mockReturnValueOnce(
+      new Promise<{ consumerTag: string }>((resolve) => {
+        resolveConsume = resolve;
+      }),
+    );
+
+    const pending = setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+      onClosed,
+    });
+    // Wait until the connection handlers are wired up, then drop the
+    // connection mid-setup: the rejected/pending setup promise is the signal
+    // in this phase, not onClosed.
+    while (connectionCloseHandler === null) await Promise.resolve();
+    connectionCloseHandler();
+    expect(onClosed).not.toHaveBeenCalled();
+
+    // Setup completes; death notifications are armed from here on.
+    resolveConsume({ consumerTag: 'tag-1' });
+    const handle = await pending;
+    channelCloseHandler!();
+    expect(onClosed).toHaveBeenCalledExactlyOnceWith('channel-closed');
+    await handle.close();
+  });
+
+  it('catches and logs a throwing onClosed callback', async () => {
+    const setupFn = await setup();
+    const onClosed = vi.fn(() => {
+      throw new Error('supervisor exploded');
+    });
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+      onClosed,
+    });
+
+    expect(() => {
+      channelCloseHandler!();
+    }).not.toThrow();
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('supervisor exploded'),
+      expect.objectContaining({ event: 'sloth.listener.on_closed_failed' }),
+    );
+    await handle.close();
+  });
+
+  it('nacks and logs when onMessage throws synchronously instead of rejecting', async () => {
+    const setupFn = await setup();
+    const onMessage = vi.fn(() => {
+      throw new Error('sync boom');
+    });
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      // Callers must return a Promise, but a sync throw from a sloppy JS
+      // handler must still hit the nack path, not escape the consume callback.
+      onMessage,
+      logger: mockLogger,
+    });
+
+    const consumeCallback = mockChannel.consume.mock.calls[0]?.[1] as (msg: unknown) => void;
+    const fakeMsg = { content: Buffer.from('{}'), properties: { headers: {} } };
+    expect(() => {
+      consumeCallback(fakeMsg);
+    }).not.toThrow();
+    await new Promise((r) => setImmediate(r));
+
+    expect(mockChannelNack).toHaveBeenCalledWith(fakeMsg, false, false);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('sync boom'),
+      expect.objectContaining({ event: 'sloth.listener.handler_failed' }),
+    );
+    await handle.close();
+  });
+
+  it('rejects a non-integer queueExpiresMs before any I/O', async () => {
+    const setupFn = await setup();
+    await expect(
+      setupFn({
+        amqpUrl: 'amqp://localhost',
+        config: testConfig,
+        onMessage: vi.fn(),
+        logger: mockLogger,
+        queueExpiresMs: 1000.5,
+      }),
+    ).rejects.toThrow('queueExpiresMs must be a positive integer');
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
+
   it('uses NoOpLogger when no logger provided', async () => {
     const setupFn = await setup();
     const handle = await setupFn({
@@ -778,7 +1056,7 @@ describe('SlothListenerHandle.close', () => {
     );
   });
 
-  it('logs error when channel.close fails', async () => {
+  it('logs error when channel.close fails and still closes the connection (no socket leak)', async () => {
     const setupFn = await setup();
     const handle = await setupFn({
       amqpUrl: 'amqp://localhost',
@@ -787,10 +1065,36 @@ describe('SlothListenerHandle.close', () => {
       logger: mockLogger,
     });
 
+    // channel.close() rejects with IllegalOperationError whenever the broker
+    // already closed the channel — the internal TCP connection must still be
+    // closed, or it leaks until process exit (the caller holds no reference).
     mockChannelClose.mockRejectedValueOnce(new Error('close failed'));
     await handle.close();
     expect(mockLogger.error).toHaveBeenCalledWith(
       expect.stringContaining('close failed'),
+      expect.objectContaining({ event: 'sloth.listener.resources_release_failed' }),
+    );
+    expect(mockConnectionClose).toHaveBeenCalled();
+  });
+
+  it('logs both failures independently when channel and connection close both fail', async () => {
+    const setupFn = await setup();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+    });
+
+    mockChannelClose.mockRejectedValueOnce(new Error('channel close failed'));
+    mockConnectionClose.mockRejectedValueOnce(new Error('connection close failed'));
+    await expect(handle.close()).resolves.toBeUndefined();
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('channel close failed'),
+      expect.objectContaining({ event: 'sloth.listener.resources_release_failed' }),
+    );
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('connection close failed'),
       expect.objectContaining({ event: 'sloth.listener.resources_release_failed' }),
     );
   });

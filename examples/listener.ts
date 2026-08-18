@@ -17,10 +17,19 @@ const handle = await setupDelayedMessageListener({
   amqpUrl,
   config: { serviceName: 'example-service', routingKey: 'example.reminder' },
   logger: consoleLogger,
+  timeoutMs: 10_000, // bounds the queue/bind/consume setup phase
   onMessage: async (message) => {
     const payload: unknown = JSON.parse(message.content.toString());
     console.log('received delayed message', payload);
     return Promise.resolve();
+  },
+  // Fired at most once if the listener dies without close() being called.
+  // The listener does not auto-reconnect — exit non-zero so a supervisor
+  // (systemd, k8s, docker restart policy) restarts the process.
+  onClosed: (reason) => {
+    console.error('listener closed unexpectedly:', reason);
+    process.exitCode = 1;
+    process.exit(1);
   },
 });
 
