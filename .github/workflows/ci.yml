@@ -60,9 +60,9 @@ jobs:
     timeout-minutes: 10
     strategy:
       matrix:
-        # Supported floor (22) + development version (24). Bare majors resolve
-        # to the latest patch, so Renovate doesn't need to track them.
-        node: ['22', '24']
+        # Supported floor (22), maintenance LTS (24) + development version (26).
+        # Bare majors resolve to the latest patch, so Renovate doesn't need to track them.
+        node: ['22', '24', '26']
     steps:
       - uses: actions/checkout@v7
         with:
@@ -88,9 +88,9 @@ jobs:
     timeout-minutes: 15
     strategy:
       matrix:
-        # Supported floor (22) + development version (24). Bare majors resolve
-        # to the latest patch, so Renovate doesn't need to track them.
-        node: ['22', '24']
+        # Supported floor (22), maintenance LTS (24) + development version (26).
+        # Bare majors resolve to the latest patch, so Renovate doesn't need to track them.
+        node: ['22', '24', '26']
     permissions:
       contents: read
       pull-requests: write
@@ -104,11 +104,11 @@ jobs:
           cache: 'npm'
       - run: npm ci --ignore-scripts
       - run: npm run coverage
-      # Comment only from the Node 24 leg (avoids duplicates), only on PRs, and
+      # Comment only from the Node 26 leg (avoids duplicates), only on PRs, and
       # not on bot PRs — the tests themselves run for everyone.
       - name: Report Coverage
         if: >
-          always() && matrix.node == '24' &&
+          always() && matrix.node == '26' &&
           github.event_name == 'pull_request' &&
           github.event.pull_request.user.login != 'renovate[bot]' &&
           github.event.pull_request.user.login != 'dependabot[bot]'

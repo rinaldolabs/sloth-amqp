@@ -8,7 +8,7 @@ high; this guide explains how to clear it.
 ## Prerequisites
 
 - Node.js `>= 22` is the supported floor (see `engines` in `package.json`); development
-  happens on the `.nvmrc` version (Node 24), and CI tests both. npm `>= 11.5.1` is only
+  happens on the `.nvmrc` version (Node 26), and CI tests 22, 24 and 26. npm `>= 11.5.1` is only
   needed for publishing (OIDC trusted publishing)
 - [Docker](https://www.docker.com/) — only needed to run the integration tests
 - Install dependencies with `npm ci` (reproducible from the committed lock file)
