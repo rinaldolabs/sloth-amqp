@@ -1,6 +1,6 @@
 // Size budget for the published bundle. Defends the zero-runtime-deps
 // promise — if a dependency creeps in, this gate fails before the PR lands.
-// Limits are minified+gzipped; current baseline is ~3-4 KB per format.
+// Limits are minified+brotlied; current baseline is ~4 KB per format.
 //
 // This is a Node.js library, not a browser bundle. The `ignore` list
 // excludes the amqplib peer dep and Node builtins (size-limit's default
