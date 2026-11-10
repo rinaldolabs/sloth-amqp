@@ -78,7 +78,7 @@ git commit -m "$(cat <<'EOF'
 
 <body explaining why; wrap at 72>
 
-Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+Co-Authored-By: Claude <noreply@anthropic.com>
 EOF
 )"
 ```
