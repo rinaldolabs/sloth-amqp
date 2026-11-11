@@ -145,9 +145,10 @@ export interface SlothListenerOptions {
    * Response queue type. Omitted: no `x-queue-type` is sent, so the vhost's
    * default queue type decides (classic on a default broker). `'quorum'`
    * declares the queue with `x-queue-type: quorum` and
-   * `x-single-active-consumer: true`, the shape Sloth's Go client v1.0.x
-   * declares, so a Node and a Go service can share it when `queueExpiresMs`
-   * keeps its default. A queue's type is fixed when it is created: switching
+   * `x-single-active-consumer: true`, the default shape Sloth's Go client
+   * v1.0.0 and v1.0.1 declare, so a Node and a Go service can share it when
+   * `queueExpiresMs` keeps its default and the Go side adds no dead-letter
+   * option. A queue's type is fixed when it is created: switching
    * an existing queue needs a drain or a fresh broker.
    */
   queueType?: SlothQueueType;

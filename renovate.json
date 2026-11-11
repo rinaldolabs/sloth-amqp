@@ -53,7 +53,7 @@
       "labels": ["deps", "node-runtime"]
     },
     {
-      "description": "RabbitMQ matrix lines: the tags carry no release timestamp, so the global minimumReleaseAge would hold every update as pending forever; patches get their own branch so a blocked minor cannot swallow them",
+      "description": "RabbitMQ matrix lines: a local lookup found no release timestamp for these tags, so the global minimumReleaseAge held every update as pending; this drops the 3-day wait for them. Patches get their own branch so a blocked minor cannot swallow them",
       "matchDatasources": ["docker"],
       "matchDepNames": ["rabbitmq"],
       "minimumReleaseAge": null,

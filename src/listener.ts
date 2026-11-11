@@ -17,8 +17,8 @@ import {
 } from './utils.js';
 import { makeWireEmitter } from './wire.js';
 
-// Matches go-messaging-amqp's default queue, which Sloth's Go client v1.0.x
-// declares for the same response queue name.
+// Matches go-messaging-amqp's default queue, which Sloth's Go client v1.0.0
+// and v1.0.1 declare for the same response queue name.
 const quorumQueueArguments = { 'x-queue-type': 'quorum', 'x-single-active-consumer': true };
 
 export async function setupDelayedMessageListener({
