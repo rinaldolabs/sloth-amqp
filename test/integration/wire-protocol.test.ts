@@ -311,6 +311,45 @@ describe('publish path: createDelaySender produces the wire format Sloth expects
   });
 });
 
+describe('publish path: mandatory', () => {
+  it('e. an unroutable request resolves by default and rejects with mandatory: true', async () => {
+    const client = await slothConnect(amqpUrl);
+    const send = (mandatory?: boolean): Promise<void> =>
+      createDelaySender(client, mandatory === undefined ? {} : { mandatory }).send({
+        data: { kind: 'mandatory-check' },
+        delayMinutes: 1,
+        logger: silentLogger,
+        config,
+      });
+    try {
+      // The publish-path test bound an exclusive probe queue to 'delay'. Until
+      // its binding is gone, 4.2 nacks a publish routed to the deleted queue.
+      await waitFor(
+        async () => {
+          const { status, body } = await mgmt(
+            'GET',
+            `/exchanges/${vhostPath()}/${slothRequestExchangeName}/bindings/source`,
+          );
+          return status === 404 || (Array.isArray(body) && body.length === 0);
+        },
+        10_000,
+        () => `no queue bound to ${slothRequestExchangeName}`,
+      );
+      await expect(send()).resolves.toBeUndefined();
+      await expect(send(false)).resolves.toBeUndefined();
+      await expect(send(true)).rejects.toThrow('unroutable');
+
+      const channel = await client.createChannel();
+      const { queue } = await channel.assertQueue('', { exclusive: true, autoDelete: true });
+      await channel.bindQueue(queue, slothRequestExchangeName, 'delay');
+      await expect(send(true)).resolves.toBeUndefined();
+      await expect(send()).resolves.toBeUndefined();
+    } finally {
+      await slothClose(client).catch(() => {});
+    }
+  });
+});
+
 describe('consume path: setupDelayedMessageListener consumes responses Sloth produces', () => {
   it('receives a message published to the response exchange with the matching service header', async () => {
     // Await the listener setup before publishing so the queue and binding exist —

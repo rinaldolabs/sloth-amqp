@@ -273,18 +273,21 @@ describe('serializeData', () => {
 
 type PublishCallback = (err: Error | null) => void;
 
+type Listener = (...args: unknown[]) => void;
+
 interface MockConfirmChannel {
   assertExchange: ReturnType<typeof vi.fn>;
   publish: ReturnType<typeof vi.fn>;
-  on: (event: string, listener: () => void) => MockConfirmChannel;
-  emit: (event: string) => void;
+  on: (event: string, listener: Listener) => MockConfirmChannel;
+  emit: (event: string, ...args: unknown[]) => void;
+  listenerCount: (event: string) => number;
 }
 
 const mockPublish = vi.fn();
 const mockAssertExchange = vi.fn().mockResolvedValue(undefined);
 
 const buildChannel = (): MockConfirmChannel => {
-  const localHandlers = new Map<string, Array<() => void>>();
+  const localHandlers = new Map<string, Listener[]>();
   const chan: MockConfirmChannel = {
     assertExchange: mockAssertExchange,
     publish: mockPublish,
@@ -294,9 +297,10 @@ const buildChannel = (): MockConfirmChannel => {
       localHandlers.set(event, list);
       return chan;
     },
-    emit: (event) => {
-      for (const fn of localHandlers.get(event) ?? []) fn();
+    emit: (event, ...args) => {
+      for (const fn of localHandlers.get(event) ?? []) fn(...args);
     },
+    listenerCount: (event) => localHandlers.get(event)?.length ?? 0,
   };
   return chan;
 };
@@ -1159,5 +1163,240 @@ describe('createDelaySender', () => {
       expect.stringContaining('observer boom'),
       expect.objectContaining({ event: 'sloth.wire.hook_failed', direction: 'out' }),
     );
+  });
+});
+
+// ─── createDelaySender with mandatory ────────────────────────────────────────
+
+interface CapturedPublish {
+  options: { mandatory?: boolean; headers: Record<string, unknown> };
+  confirm: PublishCallback;
+}
+
+describe('createDelaySender mandatory option', () => {
+  let published: CapturedPublish[];
+  const flush = (): Promise<unknown> => vi.advanceTimersByTimeAsync(0);
+  const publishIdOf = (index: number): unknown =>
+    published.at(index)?.options.headers['x-sloth-publish-id'];
+  const returnOf = (publishId: unknown, headers?: Record<string, unknown>) => ({
+    fields: {},
+    content: Buffer.alloc(0),
+    properties: { headers: headers ?? { 'x-sloth-publish-id': publishId } },
+  });
+  const params = (extra: Record<string, unknown> = {}) => ({
+    data: { n: 1 },
+    delayMinutes: 1,
+    logger: mockLogger,
+    config: testConfig,
+    ...extra,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW_MS);
+    mockChannel = buildChannel();
+    mockCreateConfirmChannel.mockImplementation(() => Promise.resolve(mockChannel));
+    published = [];
+    mockPublish.mockImplementation(
+      (
+        _ex: string,
+        _rk: string,
+        _body: Buffer,
+        options: CapturedPublish['options'],
+        confirm: PublishCallback,
+      ) => {
+        published.push({ options, confirm });
+        return true;
+      },
+    );
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ['omitted', undefined],
+    ['false', { mandatory: false }],
+  ])('publishes exactly as before when mandatory is %s', async (_label, options) => {
+    const { createDelaySender } = await import('../sender.js');
+    const promise = createDelaySender(mockClient as never, options).send(
+      params({ messageId: 'm-1' }),
+    );
+    await flush();
+    expect(published[0]?.options).toEqual({
+      persistent: true,
+      contentType: 'application/json',
+      messageId: 'm-1',
+      headers: { 'delay-until': FIXED_NOW_SEC + 60, target: 'amqp://test-service/test.key' },
+    });
+    expect(mockChannel.listenerCount('return')).toBe(0);
+    published[0]?.confirm(null);
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ['omitted', undefined],
+    ['false', { mandatory: false }],
+  ])('passes a caller x-sloth-publish-id header through when mandatory is %s', async (_l, o) => {
+    const { createDelaySender } = await import('../sender.js');
+    const promise = createDelaySender(mockClient as never, o).send(
+      params({ headers: { 'x-sloth-publish-id': 'caller-value' } }),
+    );
+    await flush();
+    expect(publishIdOf(0)).toBe('caller-value');
+    published[0]?.confirm(null);
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  it('rejects a caller x-sloth-publish-id header before any I/O when mandatory is on', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const { SlothValidationError } = await import('../errors.js');
+    await expect(
+      createDelaySender(mockClient as never, { mandatory: true }).send(
+        params({ headers: { 'x-sloth-publish-id': 'caller-value' } }),
+      ),
+    ).rejects.toBeInstanceOf(SlothValidationError);
+    expect(mockPublish).not.toHaveBeenCalled();
+  });
+
+  it('sets mandatory and a fresh publish id that the wire tap shows after the confirm', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const onWireMessage = vi.fn();
+    const promise = createDelaySender(mockClient as never, { mandatory: true }).send(
+      params({ onWireMessage }),
+    );
+    await flush();
+    expect(published[0]?.options.mandatory).toBe(true);
+    expect(publishIdOf(0)).toMatch(/^[0-9a-f-]{36}$/);
+    expect(mockChannel.listenerCount('return')).toBe(1);
+    published[0]?.confirm(null);
+    await expect(promise).resolves.toBeUndefined();
+    expect(onWireMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'x-sloth-publish-id': publishIdOf(0) }),
+      }),
+    );
+  });
+
+  it('rejects an unroutable send when the return precedes its confirm', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const { SlothPublishError } = await import('../errors.js');
+    const promise = createDelaySender(mockClient as never, { mandatory: true }).send(params());
+    promise.catch(() => undefined);
+    await flush();
+    mockChannel.emit('return', returnOf(publishIdOf(0)));
+    published[0]?.confirm(null);
+    await expect(promise).rejects.toBeInstanceOf(SlothPublishError);
+    await expect(promise).rejects.toThrow('unroutable');
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.stringContaining('failed to schedule'),
+      expect.objectContaining({ event: 'sloth.publish.failed' }),
+    );
+  });
+
+  it.each([
+    ['returned first', [0, 1]],
+    ['routed first', [1, 0]],
+  ])(
+    'rejects only the returned send when two share a messageId (confirm of the %s)',
+    async (_label, order) => {
+      const { createDelaySender } = await import('../sender.js');
+      const { send } = createDelaySender(mockClient as never, { mandatory: true });
+      const returnedSend = send(params({ messageId: 'same' }));
+      const routedSend = send(params({ messageId: 'same' }));
+      returnedSend.catch(() => undefined);
+      await flush();
+      mockChannel.emit('return', returnOf(publishIdOf(0)));
+      for (const index of order) published.at(index)?.confirm(null);
+      await expect(returnedSend).rejects.toThrow('unroutable');
+      await expect(routedSend).resolves.toBeUndefined();
+    },
+  );
+
+  it('ignores a return for an unknown, settled or malformed publish id', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const { send } = createDelaySender(mockClient as never, { mandatory: true });
+    const first = send(params());
+    await flush();
+    published[0]?.confirm(null);
+    await expect(first).resolves.toBeUndefined();
+    const second = send(params());
+    await flush();
+    mockChannel.emit('return', returnOf(publishIdOf(0)));
+    mockChannel.emit('return', returnOf('not-a-pending-id'));
+    mockChannel.emit('return', returnOf(undefined, { 'x-sloth-publish-id': 42 }));
+    mockChannel.emit('return', { fields: {}, content: Buffer.alloc(0), properties: {} });
+    published[1]?.confirm(null);
+    await expect(second).resolves.toBeUndefined();
+  });
+
+  it('rejects with the nack error when a return is followed by a nack', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const promise = createDelaySender(mockClient as never, { mandatory: true }).send(params());
+    promise.catch(() => undefined);
+    await flush();
+    mockChannel.emit('return', returnOf(publishIdOf(0)));
+    published[0]?.confirm(new Error('broker nacked'));
+    await expect(promise).rejects.toThrow('broker nacked');
+  });
+
+  it('rejects each pending send once when the channel closes, without touching a newer channel', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const { send } = createDelaySender(mockClient as never, { mandatory: true });
+    const oldChannel = mockChannel;
+    const pendingA = send(params());
+    const pendingB = send(params());
+    pendingA.catch(() => undefined);
+    pendingB.catch(() => undefined);
+    await flush();
+    oldChannel.emit('close');
+    mockChannel = buildChannel();
+    mockCreateConfirmChannel.mockImplementationOnce(() => Promise.resolve(mockChannel));
+    const fresh = send(params());
+    await flush();
+    // amqplib fails every outstanding confirm with a plain Error on close.
+    published[0]?.confirm(new Error('channel closed'));
+    published[1]?.confirm(new Error('channel closed'));
+    // A late return on the closed channel names only that channel's own ids.
+    oldChannel.emit('return', returnOf(publishIdOf(0)));
+    published[2]?.confirm(null);
+    await expect(pendingA).rejects.toThrow('channel closed');
+    await expect(pendingB).rejects.toThrow('channel closed');
+    await expect(fresh).resolves.toBeUndefined();
+  });
+
+  it.each([
+    [
+      'IllegalOperationError',
+      Object.assign(new Error('Channel closed'), { name: 'IllegalOperationError' }),
+    ],
+    ['RangeError', new RangeError('header table exceeds the encoding buffer')],
+  ])('rejects and forgets the publish id when publish throws %s', async (_label, thrown) => {
+    const { createDelaySender } = await import('../sender.js');
+    const { SlothPublishError } = await import('../errors.js');
+    mockPublish.mockImplementationOnce(() => {
+      throw thrown;
+    });
+    const { send } = createDelaySender(mockClient as never, { mandatory: true });
+    await expect(send(params())).rejects.toBeInstanceOf(SlothPublishError);
+    const next = send(params());
+    await flush();
+    published[0]?.confirm(null);
+    await expect(next).resolves.toBeUndefined();
+  });
+
+  it('keeps tracking a timed-out send until its late return and confirm arrive', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const { SlothTimeoutError } = await import('../errors.js');
+    const promise = createDelaySender(mockClient as never, { mandatory: true }).send(
+      params({ timeoutMs: 50 }),
+    );
+    promise.catch(() => undefined);
+    await flush();
+    await vi.advanceTimersByTimeAsync(51);
+    await expect(promise).rejects.toBeInstanceOf(SlothTimeoutError);
+    mockChannel.emit('return', returnOf(publishIdOf(0)));
+    expect(() => published[0]?.confirm(null)).not.toThrow();
   });
 });

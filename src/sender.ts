@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ChannelModel, ConfirmChannel } from 'amqplib';
+import type { ChannelModel, ConfirmChannel, Message } from 'amqplib';
 import { combineAbort, raceWithAbort } from './abort.js';
 import {
   errMessage,
@@ -9,7 +9,7 @@ import {
   toSlothError,
 } from './errors.js';
 import { resolveLogger } from './logger.js';
-import type { DelaySpec, SendDelayMessageParams } from './types.js';
+import type { DelaySenderOptions, DelaySpec, SendDelayMessageParams } from './types.js';
 import {
   assertSafeSlothConfig,
   getSlothTarget,
@@ -27,18 +27,24 @@ export const MAX_DELAY_SECONDS = 100 * 365 * 24 * 3600;
  */
 const RESERVED_HEADERS: ReadonlySet<string> = new Set(['delay-until', 'target']);
 
+// Ack order across publishes is not guaranteed, and callers may reuse a
+// messageId, so a basic.return is matched to its confirm by this per-attempt id.
+const publishIdHeader = 'x-sloth-publish-id';
+
 /**
  * Throws if `headers` contains any key reserved by the Sloth wire protocol
- * (`delay-until`, `target`). Returns the input unchanged on success — or an
- * empty object when called with `undefined` so callsites can spread the
- * result directly without an extra null check.
+ * (`delay-until`, `target`), or the publish id header when `mandatory` is on.
+ * Returns the input unchanged on success, or an empty object when called with
+ * `undefined` so callsites can spread the result directly without an extra
+ * null check.
  */
 const assertNoReservedHeaders = (
   headers: Record<string, string | number | boolean> | undefined,
+  mandatory: boolean,
 ): Record<string, string | number | boolean> => {
   if (!headers) return {};
   for (const key of Object.keys(headers)) {
-    if (RESERVED_HEADERS.has(key)) {
+    if (RESERVED_HEADERS.has(key) || (mandatory && key === publishIdHeader)) {
       throw new SlothValidationError(
         `headers.${key} is reserved by the Sloth wire protocol and cannot be overridden`,
       );
@@ -175,8 +181,28 @@ export interface DelaySender {
  * Uses `createConfirmChannel` so each publish awaits a broker ack — a `send`
  * that resolves means the broker has accepted the message, not just that it
  * was written to the local socket. A nack from the broker rejects the promise.
+ * With `options.mandatory`, an unroutable request rejects too.
  */
-export const createDelaySender = (client: ChannelModel): DelaySender => {
+export const createDelaySender = (
+  client: ChannelModel,
+  { mandatory = false }: DelaySenderOptions = {},
+): DelaySender => {
+  // Mandatory publishes awaiting their confirm, keyed by publish id. The broker
+  // sends basic.return before the confirm of the same message.
+  const publishStates = new Map<string, 'pending' | 'returned'>();
+  const markReturned = (message: Message): void => {
+    const publishId: unknown = Reflect.get(message.properties.headers ?? {}, publishIdHeader);
+    if (typeof publishId === 'string' && publishStates.get(publishId) === 'pending') {
+      publishStates.set(publishId, 'returned');
+    }
+  };
+  const takePublishState = (publishId: string | undefined): 'pending' | 'returned' | undefined => {
+    if (publishId === undefined) return undefined;
+    const state = publishStates.get(publishId);
+    publishStates.delete(publishId);
+    return state;
+  };
+
   let cached: ConfirmChannel | null = null;
   // Single in-flight lock so concurrent send() calls share one channel-creation
   // path instead of each opening their own (which would leak all but the last).
@@ -199,6 +225,7 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
     };
     chan.on('error', invalidate);
     chan.on('close', invalidate);
+    if (mandatory) chan.on('return', markReturned);
     try {
       // Routing key "delay" matches goamqp ServiceRequestConsumer("delay", ...) in amqp.go.
       await chan.assertExchange(slothRequestExchangeName, 'direct', { durable: true });
@@ -259,9 +286,11 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
     // Auto-generate a message ID per send unless caller provided one. UUIDs
     // give consumers a free idempotency key without us implementing dedup.
     const messageId = params.messageId ?? randomUUID();
-    const extraHeaders = assertNoReservedHeaders(params.headers);
+    const extraHeaders = assertNoReservedHeaders(params.headers, mandatory);
+    const publishId = mandatory ? randomUUID() : undefined;
     const headers = {
       ...extraHeaders,
+      ...(publishId !== undefined && { [publishIdHeader]: publishId }),
       // Reserved Sloth wire-protocol headers — written last as a defence-in-depth
       // against any future spread mistake; assertNoReservedHeaders has already
       // rejected attempts to set these via params.headers.
@@ -304,24 +333,39 @@ export const createDelaySender = (client: ChannelModel): DelaySender => {
       // already-settled promise, which is a harmless no-op (no extra guard
       // needed).
       const confirm = new Promise<void>((resolve, reject) => {
-        const ok = chan.publish(
-          slothRequestExchangeName,
-          slothDelayRoutingKey,
-          body,
-          {
-            // deliveryMode 2 — wire parity with goamqp's publishMessage, so a
-            // broker restart before Sloth consumes the request cannot drop it.
-            persistent: true,
-            contentType: 'application/json',
-            messageId,
-            ...(params.correlationId !== undefined && { correlationId: params.correlationId }),
-            headers,
-          },
-          (err) => {
-            if (err) reject(new SlothPublishError(errMessage(err), { cause: err }));
-            else resolve();
-          },
-        );
+        if (publishId !== undefined) publishStates.set(publishId, 'pending');
+        let ok: boolean;
+        try {
+          ok = chan.publish(
+            slothRequestExchangeName,
+            slothDelayRoutingKey,
+            body,
+            {
+              // deliveryMode 2 — wire parity with goamqp's publishMessage, so a
+              // broker restart before Sloth consumes the request cannot drop it.
+              persistent: true,
+              contentType: 'application/json',
+              messageId,
+              ...(params.correlationId !== undefined && { correlationId: params.correlationId }),
+              ...(mandatory && { mandatory: true }),
+              headers,
+            },
+            (err) => {
+              const returned = takePublishState(publishId) === 'returned';
+              if (err) reject(new SlothPublishError(errMessage(err), { cause: err }));
+              else if (returned) {
+                reject(
+                  new SlothPublishError(
+                    `unroutable: no queue is bound to ${slothRequestExchangeName} with routing key ${slothDelayRoutingKey}`,
+                  ),
+                );
+              } else resolve();
+            },
+          );
+        } catch (error) {
+          takePublishState(publishId);
+          throw error;
+        }
         if (!ok) {
           logger.warn('sloth: publish back-pressured (channel write buffer full)', {
             event: 'sloth.publish.back_pressured',

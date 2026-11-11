@@ -95,6 +95,19 @@ type SendDelayMessageBase<TData = unknown> = {
 
 export type SendDelayMessageParams<TData = unknown> = SendDelayMessageBase<TData> & DelaySpec;
 
+/** Options for {@link createDelaySender}. */
+export interface DelaySenderOptions {
+  /**
+   * Publish with AMQP `mandatory` so a request that no queue receives (Sloth
+   * not running on this broker yet, or its request queue expired) makes `send`
+   * reject with a `SlothPublishError` instead of resolving. Off by default,
+   * which keeps the earlier behaviour: an unroutable request is confirmed and
+   * dropped. When on, every publish carries an `x-sloth-publish-id` header,
+   * and passing that header in `params.headers` throws.
+   */
+  mandatory?: boolean;
+}
+
 /**
  * Why a listener died without `close()` being called. Passed to
  * {@link SlothListenerOptions.onClosed}.
