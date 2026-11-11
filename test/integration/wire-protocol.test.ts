@@ -851,6 +851,7 @@ const runTimedOutCase = async (
         // Control: with the handler still held (no ack) the channel stays clean.
         await sleep(5_000);
         expect(channelErrors()).toEqual([]);
+        expect(timed.events.map((e) => e.event)).not.toContain('sloth.listener.channel_closed');
       }
       await timed.handle.close();
       timed.release();
