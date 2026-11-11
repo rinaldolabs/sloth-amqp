@@ -617,6 +617,16 @@ const timeoutVhostConnections = async (): Promise<number> => {
   return Array.isArray(body) ? body.length : -1;
 };
 
+// The management API lists a connection 3 to 5 s after it opens, so the final
+// "no connections left" check only means something once a listing was seen.
+const expectVisibleConnection = async (): Promise<void> => {
+  await waitFor(
+    async () => (await timeoutVhostConnections()) > 0,
+    15_000,
+    () => `a listed connection in ${timeoutVhost}`,
+  );
+};
+
 const queuePath = (caseConfig: SlothConfig): string =>
   `/queues/${timeoutVhost}/${encodeURIComponent(getSlothQueueName(caseConfig))}`;
 
@@ -812,6 +822,7 @@ const runTimedOutCase = async (
   const dropPolicy = await prepareTimedQueue(caseConfig);
   try {
     const timed = await startTimedListener(caseConfig);
+    await expectVisibleConnection();
     await publishResponse(caseConfig, 'held');
     await waitForTimeout(caseConfig, timed);
 
@@ -826,17 +837,19 @@ const runTimedOutCase = async (
         expect(timed.events.map((e) => e.event)).toContain('sloth.listener.ack_failed');
       } else {
         // From 4.3 the channel is still open after the cancel; the late ack makes
-        // amqplib 2.3.1 close it with 541 "Unknown consumer" (case 2, with no
-        // ack, shows no such error).
+        // amqplib 2.3.1 close it ("Unknown consumer"). Case 2 is the control.
         await waitFor(
           () => Promise.resolve(channelErrors().some((r) => r.includes('Unknown consumer'))),
           5_000,
-          () => `541 after the late ack on ${caseConfig.serviceName}: ${describeTimeline(timed)}`,
+          () =>
+            `Unknown consumer after the late ack on ${caseConfig.serviceName}: ${describeTimeline(timed)}`,
         );
       }
       await timed.handle.close();
     } else {
       if (leg.timeoutExpect === 'consumer-cancelled') {
+        // Control: with the handler still held (no ack) the channel stays clean.
+        await sleep(5_000);
         expect(channelErrors()).toEqual([]);
       }
       await timed.handle.close();
@@ -855,6 +868,7 @@ const runNoTimeoutCase = async (caseConfig: SlothConfig): Promise<void> => {
   const dropPolicy = await prepareTimedQueue(caseConfig);
   try {
     const timed = await startTimedListener(caseConfig);
+    await expectVisibleConnection();
     await publishResponse(caseConfig, 'held');
     await waitFor(
       () => Promise.resolve(timed.delivered.length === 1),
