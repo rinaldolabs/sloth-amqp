@@ -187,10 +187,17 @@ export interface DelaySender {
  */
 export const createDelaySender = (
   client: ChannelModel,
-  { mandatory = false }: DelaySenderOptions = {},
+  options?: DelaySenderOptions,
 ): DelaySender => {
+  // Read as unknown: plain-JS callers may pass null options or a non-boolean.
+  const requestedMandatory: unknown = options?.mandatory;
+  if (requestedMandatory !== undefined && typeof requestedMandatory !== 'boolean') {
+    throw new SlothValidationError('mandatory must be a boolean when set');
+  }
+  const mandatory = requestedMandatory === true;
   // Mandatory publishes awaiting their confirm, keyed by publish id. The broker
-  // sends basic.return before the confirm of the same message.
+  // sends basic.return before the confirm of the same message, and amqplib
+  // fails every pending confirm when a channel closes, which removes its ids.
   const publishStates = new Map<string, 'pending' | 'returned'>();
   const markReturned = (message: Message): void => {
     const publishId: unknown = Reflect.get(message.properties.headers ?? {}, publishIdHeader);

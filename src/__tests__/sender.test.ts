@@ -1249,6 +1249,27 @@ describe('createDelaySender mandatory option', () => {
     await expect(promise).resolves.toBeUndefined();
   });
 
+  it('treats null options from a JS caller as no options', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const promise = createDelaySender(mockClient as never, null as never).send(
+      params({ messageId: 'm-1' }),
+    );
+    await flush();
+    expect(published[0]?.options).not.toHaveProperty('mandatory');
+    expect(mockChannel.listenerCount('return')).toBe(0);
+    published[0]?.confirm(null);
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  it('rejects a non-boolean mandatory from a JS caller before any I/O', async () => {
+    const { createDelaySender } = await import('../sender.js');
+    const { SlothValidationError } = await import('../errors.js');
+    expect(() => createDelaySender(mockClient as never, { mandatory: 'false' as never })).toThrow(
+      SlothValidationError,
+    );
+    expect(mockCreateConfirmChannel).not.toHaveBeenCalled();
+  });
+
   it('rejects a caller x-sloth-publish-id header before any I/O when mandatory is on', async () => {
     const { createDelaySender } = await import('../sender.js');
     const { SlothValidationError } = await import('../errors.js');
