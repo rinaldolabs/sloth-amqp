@@ -182,7 +182,7 @@ jobs:
         with:
           python-version: '3.15.2'
       - run: pipx install pre-commit
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
