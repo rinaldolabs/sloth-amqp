@@ -33,9 +33,25 @@ permissions:
 
 jobs:
   integration:
-    name: RabbitMQ wire-protocol test
+    name: RabbitMQ ${{ matrix.version }} (${{ matrix.vhost }} vhost)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every supported release line, plus an early 4.2 patch next to the latest
+        # one. Lines marked for Renovate take patch bumps; 4.2.5 stays pinned.
+        include:
+          - { version: '3.13.7', vhost: classic, timeout_expect: channel-closed } # renovate: rabbitmq
+          - { version: '3.13.7', vhost: quorum, timeout_expect: channel-closed } # renovate: rabbitmq
+          - { version: '4.2.5', vhost: classic, timeout_expect: channel-closed }
+          - { version: '4.2.5', vhost: quorum, timeout_expect: channel-closed }
+          - { version: '4.2.9', vhost: classic, timeout_expect: channel-closed } # renovate: rabbitmq
+          - { version: '4.2.9', vhost: quorum, timeout_expect: channel-closed } # renovate: rabbitmq
+          - { version: '4.3.7', vhost: classic, timeout_expect: none } # renovate: rabbitmq
+          - { version: '4.3.7', vhost: quorum, timeout_expect: consumer-cancelled } # renovate: rabbitmq
+          - { version: '4.4.0', vhost: classic, timeout_expect: none } # renovate: rabbitmq
+          - { version: '4.4.0', vhost: quorum, timeout_expect: consumer-cancelled } # renovate: rabbitmq
     steps:
       - uses: actions/checkout@v7
         with:
@@ -46,8 +62,23 @@ jobs:
           cache: 'npm'
       - run: npm ci --ignore-scripts
       - run: npm run build
+      # No DEBUG=testcontainers: it logs container env, which holds the per-run
+      # broker credentials.
       - name: Run integration tests
-        run: npm run test:integration
+        run: npm run test:integration -- --reporter=default --reporter=json --outputFile.json=integration-report.json
         env:
-          # testcontainers auto-detects Docker on ubuntu runners; no extra config needed.
-          DEBUG: 'testcontainers'
+          RABBITMQ_VERSION: ${{ matrix.version }}
+          RABBITMQ_VHOST_DEFAULT: ${{ matrix.vhost }}
+          TIMEOUT_EXPECT: ${{ matrix.timeout_expect }}
+      # A green vitest exit is not enough: every required test must have run and
+      # passed, and nothing may be skipped.
+      - name: Check that every required test ran and passed
+        run: |
+          jq '{numTotalTests, numPassedTests, numFailedTests, numPendingTests, numTodoTests}' integration-report.json
+          jq -e --rawfile required test/integration/required-tests.txt '
+            ($required | split("\n") | map(select(length > 0))) as $names
+            | [.testResults[].assertionResults[] | select(.status == "passed") | .title] as $passed
+            | .numFailedTests == 0 and .numPendingTests == 0 and .numTodoTests == 0
+              and .numPassedTests == .numTotalTests
+              and ($names - $passed | length) == 0
+          ' integration-report.json
