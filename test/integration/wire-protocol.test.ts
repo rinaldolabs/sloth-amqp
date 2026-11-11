@@ -104,7 +104,7 @@ const waitFor = async (
   check: () => Promise<boolean>,
   timeoutMs: number,
   describeWait: () => string,
-) => {
+): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await check()) return;
@@ -805,7 +805,10 @@ const waitForTimeout = async (caseConfig: SlothConfig, timed: TimedCase): Promis
   }
 };
 
-const runTimedOutCase = async (caseConfig: SlothConfig, releaseBeforeClose: boolean) => {
+const runTimedOutCase = async (
+  caseConfig: SlothConfig,
+  releaseBeforeClose: boolean,
+): Promise<void> => {
   const dropPolicy = await prepareTimedQueue(caseConfig);
   try {
     const timed = await startTimedListener(caseConfig);
@@ -848,7 +851,7 @@ const runTimedOutCase = async (caseConfig: SlothConfig, releaseBeforeClose: bool
   }
 };
 
-const runNoTimeoutCase = async (caseConfig: SlothConfig) => {
+const runNoTimeoutCase = async (caseConfig: SlothConfig): Promise<void> => {
   const dropPolicy = await prepareTimedQueue(caseConfig);
   try {
     const timed = await startTimedListener(caseConfig);

@@ -31,6 +31,8 @@ const RESERVED_HEADERS: ReadonlySet<string> = new Set(['delay-until', 'target'])
 // messageId, so a basic.return is matched to its confirm by this per-attempt id.
 const publishIdHeader = 'x-sloth-publish-id';
 
+const unroutableMessage = `unroutable: no queue is bound to ${slothRequestExchangeName} with routing key ${slothDelayRoutingKey}`;
+
 /**
  * Throws if `headers` contains any key reserved by the Sloth wire protocol
  * (`delay-until`, `target`), or the publish id header when `mandatory` is on.
@@ -353,13 +355,8 @@ export const createDelaySender = (
             (err) => {
               const returned = takePublishState(publishId) === 'returned';
               if (err) reject(new SlothPublishError(errMessage(err), { cause: err }));
-              else if (returned) {
-                reject(
-                  new SlothPublishError(
-                    `unroutable: no queue is bound to ${slothRequestExchangeName} with routing key ${slothDelayRoutingKey}`,
-                  ),
-                );
-              } else resolve();
+              else if (returned) reject(new SlothPublishError(unroutableMessage));
+              else resolve();
             },
           );
         } catch (error) {

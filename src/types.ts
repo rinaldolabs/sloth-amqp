@@ -103,10 +103,10 @@ export interface DelaySenderOptions {
   /**
    * Publish with AMQP `mandatory` so a request that no queue receives (Sloth
    * not running on this broker yet, or its request queue expired) makes `send`
-   * reject with a `SlothPublishError` instead of resolving. Off by default,
-   * which keeps the earlier behaviour: an unroutable request is confirmed and
-   * dropped. When on, every publish carries an `x-sloth-publish-id` header,
-   * and passing that header in `params.headers` throws.
+   * reject with a `SlothPublishError` instead of resolving. Off by default: an
+   * unroutable request is then confirmed and dropped. When on, every publish
+   * carries an `x-sloth-publish-id` header, and passing that header in
+   * `params.headers` throws.
    */
   mandatory?: boolean;
 }
@@ -143,8 +143,8 @@ export interface SlothListenerOptions {
   queueExpiresMs?: number;
   /**
    * Response queue type. Omitted: no `x-queue-type` is sent, so the vhost's
-   * default queue type decides (classic on a default broker), exactly as
-   * before. `'quorum'` declares the queue with `x-queue-type: quorum` and
+   * default queue type decides (classic on a default broker). `'quorum'`
+   * declares the queue with `x-queue-type: quorum` and
    * `x-single-active-consumer: true`, the shape Sloth's Go client v1.0.x
    * declares, so a Node and a Go service can share it when `queueExpiresMs`
    * keeps its default. A queue's type is fixed when it is created: switching
