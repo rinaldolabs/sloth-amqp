@@ -17,12 +17,17 @@ import {
 } from './utils.js';
 import { makeWireEmitter } from './wire.js';
 
+// Matches go-messaging-amqp's default queue, which Sloth's Go client v1.0.x
+// declares for the same response queue name.
+const quorumQueueArguments = { 'x-queue-type': 'quorum', 'x-single-active-consumer': true };
+
 export async function setupDelayedMessageListener({
   amqpUrl,
   config,
   logger: rawLogger = new NoOpLogger(),
   onMessage,
   queueExpiresMs = defaultListenerQueueExpiresMs,
+  queueType,
   prefetch = defaultListenerPrefetch,
   graceTimeoutMs = defaultListenerGraceTimeoutMs,
   logLevel,
@@ -42,6 +47,10 @@ export async function setupDelayedMessageListener({
   }
   if (!Number.isInteger(prefetch) || prefetch < 0) {
     throw new SlothValidationError('prefetch must be a non-negative integer');
+  }
+  const requestedQueueType: unknown = queueType;
+  if (requestedQueueType !== undefined && requestedQueueType !== 'quorum') {
+    throw new SlothValidationError("queueType must be 'quorum' when set");
   }
   if (!Number.isInteger(graceTimeoutMs) || graceTimeoutMs < 0) {
     throw new SlothValidationError('graceTimeoutMs must be a non-negative integer');
@@ -240,7 +249,11 @@ export async function setupDelayedMessageListener({
       signal,
     );
     await raceWithAbort(
-      channel.assertQueue(queueName, { durable: true, expires: queueExpiresMs }),
+      channel.assertQueue(queueName, {
+        durable: true,
+        expires: queueExpiresMs,
+        ...(queueType === 'quorum' && { arguments: quorumQueueArguments }),
+      }),
       signal,
     );
     // Headers exchange: routing is matched on the binding arguments

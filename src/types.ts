@@ -95,6 +95,9 @@ type SendDelayMessageBase<TData = unknown> = {
 
 export type SendDelayMessageParams<TData = unknown> = SendDelayMessageBase<TData> & DelaySpec;
 
+/** Opt-in response queue type for {@link SlothListenerOptions.queueType}. */
+export type SlothQueueType = 'quorum';
+
 /** Options for {@link createDelaySender}. */
 export interface DelaySenderOptions {
   /**
@@ -138,6 +141,16 @@ export interface SlothListenerOptions {
    */
   onClosed?: (reason: SlothListenerClosedReason) => void;
   queueExpiresMs?: number;
+  /**
+   * Response queue type. Omitted: no `x-queue-type` is sent, so the vhost's
+   * default queue type decides (classic on a default broker), exactly as
+   * before. `'quorum'` declares the queue with `x-queue-type: quorum` and
+   * `x-single-active-consumer: true`, the shape Sloth's Go client v1.0.x
+   * declares, so a Node and a Go service can share it when `queueExpiresMs`
+   * keeps its default. A queue's type is fixed when it is created: switching
+   * an existing queue needs a drain or a fresh broker.
+   */
+  queueType?: SlothQueueType;
   /**
    * Consumer prefetch (QoS) — the maximum number of unacknowledged messages
    * the broker will deliver to this consumer at once. Defaults to `20`.

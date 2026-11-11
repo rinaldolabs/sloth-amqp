@@ -6,4 +6,5 @@ e. an unroutable request resolves by default and rejects with mandatory: true
 receives a message published to the response exchange with the matching service header
 delivers only messages whose service header matches; wrong or absent headers are dropped
 nacks without redelivery and keeps consuming subsequent messages
+f. 'quorum' attaches to a Go-like queue and an existing queue without it refuses
 d. consumer timeout behaves as the leg expects, with no leaked connection

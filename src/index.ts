@@ -29,6 +29,7 @@ export type {
   SlothListenerClosedReason,
   SlothListenerHandle,
   SlothListenerOptions,
+  SlothQueueType,
   SlothSetup,
   SlothWireEvent,
   SlothWireInbound,

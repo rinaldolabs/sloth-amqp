@@ -20,6 +20,7 @@ import {
   slothConnect,
   slothRequestExchangeName,
   slothResponseExchangeName,
+  SlothConnectError,
   type SlothConfig,
   type SlothListenerClosedReason,
   type SlothListenerHandle,
@@ -502,6 +503,76 @@ describe('nack path: a failing handler drops the message (requeue=false)', () =>
     } finally {
       await publisherConn.close().catch(() => {});
     }
+  });
+});
+
+describe('consume path: opt-in quorum response queue', () => {
+  it("f. 'quorum' attaches to a Go-like queue and an existing queue without it refuses", async () => {
+    const goLikeConfig: SlothConfig = {
+      serviceName: 'integration-quorum',
+      routingKey: 'integration.quorum.key',
+    };
+    const client = await amqp.connect(amqpUrl);
+    try {
+      const channel = await client.createChannel();
+      await channel.assertQueue(getSlothQueueName(goLikeConfig), {
+        durable: true,
+        expires: defaultListenerQueueExpiresMs,
+        arguments: { 'x-queue-type': 'quorum', 'x-single-active-consumer': true },
+      });
+    } finally {
+      await client.close();
+    }
+    const handle = await setupDelayedMessageListener({
+      amqpUrl,
+      config: goLikeConfig,
+      logger: silentLogger,
+      queueType: 'quorum',
+      onMessage: () => Promise.resolve(),
+    });
+    try {
+      const { body } = await mgmt(
+        'GET',
+        `/queues/${vhostPath()}/${encodeURIComponent(getSlothQueueName(goLikeConfig))}`,
+      );
+      expect(Reflect.get(Object(body), 'type')).toBe('quorum');
+      expect(Reflect.get(Object(body), 'arguments')).toMatchObject({
+        'x-single-active-consumer': true,
+        'x-expires': defaultListenerQueueExpiresMs,
+      });
+    } finally {
+      await handle.close();
+    }
+
+    // A queue's type and arguments are fixed at creation, so opting in later
+    // is refused rather than silently ignored.
+    const existingConfig: SlothConfig = {
+      serviceName: 'integration-quorum-existing',
+      routingKey: 'integration.quorum.existing.key',
+    };
+    const plain = await setupDelayedMessageListener({
+      amqpUrl,
+      config: existingConfig,
+      logger: silentLogger,
+      onMessage: () => Promise.resolve(),
+    });
+    await plain.close();
+    const refusal = await setupDelayedMessageListener({
+      amqpUrl,
+      config: existingConfig,
+      logger: silentLogger,
+      queueType: 'quorum',
+      onMessage: () => Promise.resolve(),
+    }).then(
+      async (unexpected) => {
+        await unexpected.close();
+        return undefined;
+      },
+      (error: unknown) => error,
+    );
+    console.info(`test-f-refusal=${String(refusal)}`);
+    expect(refusal).toBeInstanceOf(SlothConnectError);
+    expect(String(refusal)).toContain('PRECONDITION_FAILED');
   });
 });
 
