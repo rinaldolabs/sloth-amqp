@@ -22,12 +22,14 @@ export {
 } from './sender.js';
 export type { DelaySender } from './sender.js';
 export type {
+  DelaySenderOptions,
   DelaySpec,
   OnWireMessage,
   SendDelayMessageParams,
   SlothListenerClosedReason,
   SlothListenerHandle,
   SlothListenerOptions,
+  SlothQueueType,
   SlothSetup,
   SlothWireEvent,
   SlothWireInbound,

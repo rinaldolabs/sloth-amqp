@@ -9,9 +9,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![provenance](https://img.shields.io/badge/npm-provenance-blueviolet)](https://docs.npmjs.com/generating-provenance-statements)
 
-Node.js TypeScript client for [Sloth](https://gitlab.com/unboundsoftware/sloth) — a delayed-message delivery service over AMQP/RabbitMQ.
+Node.js TypeScript client for [Sloth](https://codeberg.org/sloth-scheduler) — a delayed-message delivery service over AMQP/RabbitMQ.
 
-This package implements the same wire protocol as [`gitlab.com/unboundsoftware/sloth/client-amqp`](https://gitlab.com/unboundsoftware/sloth/client-amqp) (the canonical Go client) — the two can interoperate against the same Sloth server — but the TypeScript API is intentionally different; see [Compared to the Go client](#compared-to-the-go-client). The `SlothSetup` composition pattern is borrowed from [@opzkit/nodeamqp](https://www.npmjs.com/package/@opzkit/nodeamqp); the two libraries are otherwise independent and cover different patterns (`nodeamqp` handles event streams and request/response; this one handles delayed messages via Sloth).
+This package implements the same wire protocol as [`codeberg.org/sloth-scheduler/client-amqp`](https://codeberg.org/sloth-scheduler/client-amqp) (the canonical Go client) — the two can interoperate against the same Sloth server — but the TypeScript API is intentionally different; see [Compared to the Go client](#compared-to-the-go-client). The `SlothSetup` composition pattern is borrowed from [@opzkit/nodeamqp](https://www.npmjs.com/package/@opzkit/nodeamqp); the two libraries are otherwise independent and cover different patterns (`nodeamqp` handles event streams and request/response; this one handles delayed messages via Sloth).
 
 ## Installation
 
@@ -90,6 +90,8 @@ All variants are validated before any AMQP work happens: positive and finite num
 
 > **Publish timeout & at-least-once.** Without `timeoutMs`/`signal`, `send` resolves only when the broker confirms (or the channel closes). On a black-hole partition (socket alive but no confirm) it can hang until heartbeats trip the channel — and **indefinitely** if the connection was opened with `heartbeat: 0`, which genuinely disables heartbeats on amqplib v2. Set `timeoutMs` to bound this. **A timed-out publish may still have reached the broker** — delivery is at-least-once, so make consumers idempotent. A timeout does not recreate the cached channel (the message may yet confirm); only a broker error/close does.
 
+> **Unroutable requests (opt-in `mandatory`).** By default a request that no queue receives (Sloth not running on this broker yet, or its request queue expired after 5 idle days) is confirmed and dropped, so `send` resolves. Pass `createDelaySender(client, { mandatory: true })` to make such a send reject with a `SlothPublishError` instead; this is worth turning on before switching to a fresh broker. With the option on, each publish carries an `x-sloth-publish-id` header (matching the broker's return to its confirm), and passing that header yourself throws. A `mandatory` value that is not a boolean throws `SlothValidationError` when the sender is created. A resolved send then means the request reached at least one queue and was confirmed, not that Sloth has processed it.
+
 ### Listening for delivered messages
 
 ```ts
@@ -131,12 +133,13 @@ await using handle = await setupDelayedMessageListener({ amqpUrl, config, onMess
 
 Optional fields on `setupDelayedMessageListener`:
 
-| Field            | Type                                          | Default | Notes                                                                                                                                                                                        |
-| ---------------- | --------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `queueExpiresMs` | `number`                                      | 5 days  | Auto-expiry for the response queue when no consumer is connected (`x-expires`). Must be a positive integer.                                                                                  |
-| `prefetch`       | `number`                                      | `20`    | Consumer prefetch (QoS) — max unacknowledged messages delivered at once. Sloth re-delivers in bursts, so a bounded window caps memory. `0` = unlimited. Must be a non-negative integer.      |
-| `graceTimeoutMs` | `number`                                      | `10000` | How long `handle.close()` waits for in-flight `onMessage` handlers to settle (after cancelling the consumer) before closing the channel. `0` skips the wait. Must be a non-negative integer. |
-| `onClosed`       | `(reason: SlothListenerClosedReason) => void` | —       | Opt-in death notification — see the supervision note below.                                                                                                                                  |
+| Field            | Type                                          | Default | Notes                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------- | --------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queueExpiresMs` | `number`                                      | 5 days  | Auto-expiry for the response queue when no consumer is connected (`x-expires`). Must be a positive integer.                                                                                                                                                                                                                                                                                                                       |
+| `prefetch`       | `number`                                      | `20`    | Consumer prefetch (QoS) — max unacknowledged messages delivered at once. Sloth re-delivers in bursts, so a bounded window caps memory. `0` = unlimited. Must be a non-negative integer.                                                                                                                                                                                                                                           |
+| `graceTimeoutMs` | `number`                                      | `10000` | How long `handle.close()` waits for in-flight `onMessage` handlers to settle (after cancelling the consumer) before closing the channel. `0` skips the wait. Must be a non-negative integer.                                                                                                                                                                                                                                      |
+| `onClosed`       | `(reason: SlothListenerClosedReason) => void` | —       | Opt-in death notification — see the supervision note below.                                                                                                                                                                                                                                                                                                                                                                       |
+| `queueType`      | `'quorum'`                                    | omitted | Omitted: no `x-queue-type` is sent and the vhost default decides (classic on a default broker). `'quorum'` adds `x-queue-type: quorum` and `x-single-active-consumer: true`, the response queue Sloth's Go client v1.0.0 and v1.0.1 declare by default (a different `x-expires` or a dead-letter option on the Go side still differs). A queue keeps the type it was created with. Any other value throws `SlothValidationError`. |
 
 > **Shutdown & at-least-once.** `handle.close()` cancels the consumer (no new deliveries), waits up to `graceTimeoutMs` for in-flight handlers to finish, then closes the channel and connection. A clean drain avoids the broker requeuing messages a handler was mid-way through — but if a handler is still running when the grace period elapses (or you set `graceTimeoutMs: 0`), its message is requeued and redelivered (`redelivered: true`) on next connect. Delivery is at-least-once either way, so handlers must be idempotent.
 
@@ -409,6 +412,23 @@ const client = await slothConnect('amqps://broker.internal:5671', {
 
 A `clientProperties` key inside `socketOptions` is merged underneath the dedicated `clientProperties` / `connectionName` options (the dedicated ones win). Heartbeats are tuned via the URL query string (`amqp://…?heartbeat=30`); note that `heartbeat=0` genuinely disables them on amqplib v2 — see the publish-timeout caveat above.
 
+## RabbitMQ versions
+
+The same code runs on every supported broker; the library never checks the broker version. It asks only for per-consumer prefetch and durable queues, so the features RabbitMQ 4.3 denies by default (global QoS, transient non-exclusive queues) are not used. CI runs the integration suite against RabbitMQ 3.13.7, 4.2.5, 4.2.9, 4.3.7 and 4.4.0, each with a classic and a quorum default vhost. The suite uses a stand-in for the Sloth server, so it proves this library's wire behaviour, not a Sloth deployment end to end.
+
+What still differs between broker versions:
+
+| Behaviour                                        | 3.13 and 4.2                                         | 4.3.7 and 4.4.0                                                                                                                                                                                                                                     |
+| ------------------------------------------------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Consumer timeout (default 30 min), classic queue | Channel closed (`406`): `onClosed('channel-closed')` | Not evaluated                                                                                                                                                                                                                                       |
+| Consumer timeout, quorum queue                   | Channel closed (`406`): `onClosed('channel-closed')` | Consumer cancelled: `onClosed('consumer-cancelled')`. In the tested images, an ack from the old handler after the cancel was followed by amqplib closing the channel (`Unknown consumer`); with no ack the channel stayed open for the 5 s observed |
+| Quorum delivery limit                            | None on 3.13, 20 on 4.2                              | 20, counting only failed deliveries                                                                                                                                                                                                                 |
+| Passive declare in `ping`                        | No permission check                                  | Configure permission (4.3); configure, write or read (4.4)                                                                                                                                                                                          |
+
+In every timeout case the message goes back to the queue and is redelivered, so close the old handle, start a new listener and keep handlers idempotent. The 4.3 and 4.4 quorum row was tested on 4.3.7 and 4.4.0 (earlier 4.3 patches are not tested), and a broker configured with `consumer_timeout_response = close_channel` closes the channel instead. `nack(requeue=false)` drops a message unless a dead-letter exchange is configured on the queue or by policy.
+
+On a vhost whose default queue type is quorum, a listener without `queueType` gets a quorum queue, which works because the listener's prefetch is per consumer. A queue keeps its type and arguments: an existing queue refuses a declaration with different ones (`406 PRECONDITION_FAILED`), so a Node listener and a Go v1.0.0 or v1.0.1 service sharing a `serviceName` must both use the quorum shape with the default `x-expires`, and switching an existing queue needs a drain or a fresh broker.
+
 ## Operating in production
 
 - **Connection ownership and `'error'` events.** The `ChannelModel` returned by `slothConnect` is yours — attach an `'error'` handler (see [Setup composition](#setup-composition)); an unhandled `'error'` event crashes a Node process. During `slothConnect`'s own setup window, and on every connection/channel the library creates internally (listener, ping), the library guards this for you.
@@ -477,7 +497,9 @@ import type {
   SlothListenerClosedReason,
   SendDelayMessageParams,
   DelaySender,
+  DelaySenderOptions,
   DelaySpec,
+  SlothQueueType,
   PingOptions,
   OnWireMessage,
   SlothWireEvent,
@@ -509,7 +531,7 @@ import type {
 
 ## Wire compatibility
 
-Implements the Sloth AMQP protocol as defined by the upstream [`amqp` source plugin](https://gitlab.com/unboundsoftware/sloth/amqp). The wire format — exchange names, routing keys, header names and types, queue naming — is treated as a fixed contract and verified by `test/integration/wire-protocol.test.ts` against a real RabbitMQ container.
+Implements the Sloth AMQP protocol as defined by the upstream [`amqp` source plugin](https://codeberg.org/sloth-scheduler/amqp) (formerly on GitLab, now archived there). The wire format — exchange names, routing keys, header names and types, queue naming — is treated as a fixed contract and verified by `test/integration/wire-protocol.test.ts` against a real RabbitMQ container.
 
 Headers sent with each delayed message:
 
@@ -522,7 +544,7 @@ Requests are published to `sloth.direct.exchange.request` with routing key `dela
 
 ## Compared to the Go client
 
-The wire protocol — exchange names, routing keys, `delay-until` / `target` headers — is identical to [`gitlab.com/unboundsoftware/sloth/client-amqp`](https://gitlab.com/unboundsoftware/sloth/client-amqp). The TypeScript API intentionally diverges from the Go API where idiomatic TypeScript suggests a different shape:
+The wire protocol — exchange names, routing keys, `delay-until` / `target` headers — is identical to [`codeberg.org/sloth-scheduler/client-amqp`](https://codeberg.org/sloth-scheduler/client-amqp). Its v1.0.0 and v1.0.1 declare the response queue as quorum with single active consumer by default; use `queueType: 'quorum'` when a Node listener shares a queue with it. The TypeScript API intentionally diverges from the Go API where idiomatic TypeScript suggests a different shape:
 
 - **Per-call config instead of a type registry.** The Go client uses `reflect.TypeOf` to map request structs to routing keys at registration time (`New(serviceName, url, mappings...)`). We require the caller to pass `{ serviceName, routingKey }` per send. TypeScript has no runtime type reflection for arbitrary types, and explicit config is type-safer than a runtime registry.
 - **Explicit listener handle.** `setupDelayedMessageListener` returns `SlothListenerHandle { consumerTag, close() }`. The Go client returns a `goamqp.Setup` function and exposes `ResponseListener(handler, types...)`. The handle makes shutdown order explicit and prevents leaked consumers.
@@ -534,7 +556,7 @@ The wire protocol — exchange names, routing keys, `delay-until` / `target` hea
 ## Related
 
 - [@opzkit/nodeamqp](https://www.npmjs.com/package/@opzkit/nodeamqp) — event streams and service request/response
-- [Sloth server](https://gitlab.com/unboundsoftware/sloth) — the delay service this client connects to
+- [Sloth server](https://codeberg.org/sloth-scheduler) — the delay service this client connects to
 
 ## Acknowledgements
 

@@ -34,12 +34,10 @@
       "versioningTemplate": "node"
     },
     {
-      "description": "Track the RabbitMQ image used in integration tests",
+      "description": "Track the RabbitMQ versions in the integration matrix (lines marked '# renovate: rabbitmq')",
       "customType": "regex",
-      "managerFilePatterns": ["/^test/integration/.*\\.test\\.ts$/"],
-      "matchStrings": [
-        "GenericContainer\\(['\"](?<depName>[a-z0-9-]+):(?<currentValue>[^'\"]+)['\"]\\)"
-      ],
+      "managerFilePatterns": ["/^\\.github/workflows/integration\\.yml$/"],
+      "matchStrings": ["version: '(?<currentValue>[0-9.]+)'.*# renovate: (?<depName>rabbitmq)"],
       "datasourceTemplate": "docker"
     }
   ],
@@ -53,6 +51,22 @@
       "separateMinorPatch": false,
       "separateMultipleMajor": false,
       "labels": ["deps", "node-runtime"]
+    },
+    {
+      "description": "RabbitMQ matrix lines: a local lookup found no release timestamp for these tags, so the global minimumReleaseAge held every update as pending; this drops the 3-day wait for them. Patches get their own branch so a blocked minor cannot swallow them",
+      "matchDatasources": ["docker"],
+      "matchDepNames": ["rabbitmq"],
+      "minimumReleaseAge": null,
+      "separateMinorPatch": true
+    },
+    {
+      "description": "RabbitMQ matrix legs below the newest line take patches only (Docker versioning has no ranges, hence the regex)",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker"],
+      "matchDepNames": ["rabbitmq"],
+      "matchCurrentVersion": "/^(3\\.13|4\\.[0-3])\\./",
+      "matchUpdateTypes": ["major", "minor"],
+      "enabled": false
     },
     {
       "description": "Auto-merge minor/patch for production deps",

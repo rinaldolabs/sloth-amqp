@@ -95,6 +95,22 @@ type SendDelayMessageBase<TData = unknown> = {
 
 export type SendDelayMessageParams<TData = unknown> = SendDelayMessageBase<TData> & DelaySpec;
 
+/** Opt-in response queue type for {@link SlothListenerOptions.queueType}. */
+export type SlothQueueType = 'quorum';
+
+/** Options for {@link createDelaySender}. */
+export interface DelaySenderOptions {
+  /**
+   * Publish with AMQP `mandatory` so a request that no queue receives (Sloth
+   * not running on this broker yet, or its request queue expired) makes `send`
+   * reject with a `SlothPublishError` instead of resolving. Off by default: an
+   * unroutable request is then confirmed and dropped. When on, every publish
+   * carries an `x-sloth-publish-id` header, and passing that header in
+   * `params.headers` throws.
+   */
+  mandatory?: boolean;
+}
+
 /**
  * Why a listener died without `close()` being called. Passed to
  * {@link SlothListenerOptions.onClosed}.
@@ -125,6 +141,17 @@ export interface SlothListenerOptions {
    */
   onClosed?: (reason: SlothListenerClosedReason) => void;
   queueExpiresMs?: number;
+  /**
+   * Response queue type. Omitted: no `x-queue-type` is sent, so the vhost's
+   * default queue type decides (classic on a default broker). `'quorum'`
+   * declares the queue with `x-queue-type: quorum` and
+   * `x-single-active-consumer: true`, the default shape Sloth's Go client
+   * v1.0.0 and v1.0.1 declare, so a Node and a Go service can share it when
+   * `queueExpiresMs` keeps its default and the Go side adds no dead-letter
+   * option. A queue's type is fixed when it is created: switching
+   * an existing queue needs a drain or a fresh broker.
+   */
+  queueType?: SlothQueueType;
   /**
    * Consumer prefetch (QoS) — the maximum number of unacknowledged messages
    * the broker will deliver to this consumer at once. Defaults to `20`.

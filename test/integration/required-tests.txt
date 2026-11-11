@@ -1,0 +1,10 @@
+a. the broker reports the version this leg was started for
+b. the listener queue gets the vhost default type
+c. global QoS: 540 on a quorum queue before 4.3, rewritten to per-consumer from 4.3
+publishes to the request exchange with delay routing key, target header, and delay-until
+e. an unroutable request resolves by default and rejects with mandatory: true
+receives a message published to the response exchange with the matching service header
+delivers only messages whose service header matches; wrong or absent headers are dropped
+nacks without redelivery and keeps consuming subsequent messages
+f. 'quorum' attaches to a Go-like queue and an existing queue without it refuses
+d. consumer timeout behaves as the leg expects, with no leaked connection

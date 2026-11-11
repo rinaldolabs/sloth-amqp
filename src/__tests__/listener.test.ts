@@ -254,6 +254,56 @@ describe('setupDelayedMessageListener', () => {
     }
   });
 
+  it('declares the response queue exactly as before when queueType is omitted', async () => {
+    const setupFn = await setup();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+    });
+    expect(mockChannel.assertQueue).toHaveBeenCalledWith(
+      'sloth.headers.exchange.response.queue.test-service',
+      { durable: true, expires: 5 * 24 * 60 * 60 * 1000 },
+    );
+    await handle.close();
+  });
+
+  it("declares a quorum queue with single active consumer when queueType is 'quorum'", async () => {
+    const setupFn = await setup();
+    const handle = await setupFn({
+      amqpUrl: 'amqp://localhost',
+      config: testConfig,
+      onMessage: vi.fn(),
+      logger: mockLogger,
+      queueType: 'quorum',
+    });
+    expect(mockChannel.assertQueue).toHaveBeenCalledWith(
+      'sloth.headers.exchange.response.queue.test-service',
+      {
+        durable: true,
+        expires: 5 * 24 * 60 * 60 * 1000,
+        arguments: { 'x-queue-type': 'quorum', 'x-single-active-consumer': true },
+      },
+    );
+    await handle.close();
+  });
+
+  it('rejects an unknown queueType from a JS caller before any I/O', async () => {
+    const setupFn = await setup();
+    const { SlothValidationError } = await import('../errors.js');
+    await expect(
+      setupFn({
+        amqpUrl: 'amqp://localhost',
+        config: testConfig,
+        onMessage: vi.fn(),
+        logger: mockLogger,
+        queueType: 'classic' as never,
+      }),
+    ).rejects.toBeInstanceOf(SlothValidationError);
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
+
   it('rejects a non-integer prefetch before any I/O', async () => {
     const setupFn = await setup();
     await expect(
