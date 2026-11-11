@@ -53,10 +53,11 @@
       "labels": ["deps", "node-runtime"]
     },
     {
-      "description": "Docker Hub gives the RabbitMQ tags no release timestamp, so the global minimumReleaseAge would hold every update as pending forever",
+      "description": "RabbitMQ matrix lines: the tags carry no release timestamp, so the global minimumReleaseAge would hold every update as pending forever; patches get their own branch so a blocked minor cannot swallow them",
       "matchDatasources": ["docker"],
       "matchDepNames": ["rabbitmq"],
-      "minimumReleaseAge": null
+      "minimumReleaseAge": null,
+      "separateMinorPatch": true
     },
     {
       "description": "RabbitMQ matrix legs below the newest line take patches only (Docker versioning has no ranges, hence the regex)",
